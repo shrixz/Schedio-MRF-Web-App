@@ -1,0 +1,970 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css">
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <style>
+    :root { 
+      --primary: #212529; 
+      --accent: #212529; 
+      --bg: #f8f9fa; 
+    }
+    body { font-family: 'Plus Jakarta Sans', Tahoma, sans-serif; background: var(--bg); color: #1a1a1a; min-height: 100vh; }
+    
+    #loader { display: flex; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(255,255,255,0.9); z-index: 10000; justify-content: center; align-items: center; flex-direction: column; }
+    
+    /* Login Styles */
+    .login-container { min-height: 100vh; display: flex; align-items: center; justify-content: center; background: linear-gradient(135deg, #212529 0%, #343a40 100%); padding: 20px; }
+    .login-card { width: 100%; max-width: 450px; background: white; border-radius: 12px; padding: 48px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); text-align: center; }
+    .login-logo { width: 120px; height: 120px; object-fit: contain; margin-bottom: 24px; border-radius: 16px; }
+    
+    /* App Styles - UPDATED HEADER LAYOUT */
+    .navbar { background: #ffffff; padding: 15px 40px; border-bottom: 5px solid var(--primary); box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1); }
+    .navbar .container-fluid { display: flex; justify-content: space-between; align-items: center; width: 100%; }
+    .nav-left, .nav-right { width: 150px; display: flex; align-items: center; }
+    .nav-left { justify-content: flex-start; }
+    .nav-right { justify-content: flex-end; }
+    .nav-center { flex-grow: 1; display: flex; justify-content: center; }
+
+    .navbar-brand { font-weight: 800; color: var(--primary) !important; font-size: 1.5rem; text-transform: uppercase; letter-spacing: 2px; margin: 0;}
+    .nav-logo { height: 60px; width: auto; }
+
+    /* User bar sits BELOW the header in its own strip, right-aligned. */
+    .user-bar { background: #f8f9fa; border-bottom: 1px solid #dee2e6; padding: 10px 40px; display: flex; justify-content: flex-end; align-items: center; gap: 15px; }
+
+    /* Tabs Style */
+    .nav-pills .nav-link { border: 1px solid var(--primary); color: var(--primary); border-radius: 4px; }
+    .nav-pills .nav-link.active { background-color: var(--primary) !important; color: #fff !important; }
+
+    .mrf-card { background: #fff; padding: 30px; margin-top: 15px; border-radius: 4px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); border-top: 5px solid var(--primary); }
+    .btn-dark-gray { background-color: var(--primary); color: #ffffff; font-weight: 700; padding: 12px 25px; border: none; border-radius: 4px; }
+    .btn-dark-gray:hover { background-color: #000000; color: #fff; }
+    
+    .btn-approve { background-color: var(--primary); color: #ffffff; border: none; padding: 8px 20px; font-weight: 700; font-size: 0.85rem; border-radius: 4px; margin-left: 5px;}
+    .btn-approve:hover { background-color: #198754; color: #fff; }
+    .btn-decline { background-color: #dc3545; color: #fff; border: none; padding: 8px 20px; font-weight: 700; font-size: 0.85rem; border-radius: 4px; margin-right: 5px;}
+    .btn-decline:hover { background-color: #a71d2a; }
+    .btn-info-req { background-color: #0dcaf0; color: #fff; border: none; padding: 8px 20px; font-weight: 700; font-size: 0.85rem; border-radius: 4px;}
+    .btn-info-req:hover { background-color: #0bacce; color: #fff; }
+
+    th { background-color: var(--primary) !important; color: #ffffff !important; font-size: 0.75rem; text-transform: uppercase; border: 1px solid #444 !important; text-align: center; }
+    .batch-card { border: 2px solid var(--primary); border-radius: 4px; background: #fff; margin-bottom: 30px; }
+    .batch-header { background: var(--primary); color: #ffffff; padding: 12px 20px; display: flex; justify-content: space-between; align-items: center; }
+    .batch-footer { padding: 15px 20px; border-top: 1px solid #ddd; background: #f8f9fa; display: flex; justify-content: flex-end; align-items: center; }
+    label { font-weight: 700; font-size: 0.85rem; text-transform: uppercase; color: var(--primary); margin-bottom: 5px; }
+    .form-control, .form-select { border-radius: 4px; border: 1px solid #ced4da; }
+    .btn-remove { padding: 0; border: none; background: transparent; line-height: 1; font-size: 1.2rem; }
+    input::-webkit-outer-spin-button, input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+    input[type=number] { -moz-appearance: textfield; }
+    
+    .justification-card { border: 2px solid #0dcaf0; border-radius: 4px; background: #fff; margin-bottom: 30px; }
+    .justification-header { background: #0dcaf0; color: #fff; padding: 12px 20px; font-weight: bold; text-transform: uppercase;}
+  </style>
+</head>
+<body>
+
+<div id="loader"><div class="spinner-border text-dark" style="width: 3rem; height: 3rem;"></div><div class="mt-3 fw-bold text-uppercase">Processing...</div></div>
+
+<div id="login-section" class="login-container" style="display:none;">
+  <div class="login-card">
+    <? if (logo1Url) { ?><img src="<?= logo1Url ?>" class="login-logo" alt="Logo"><? } ?>
+    <h3 class="fw-bold text-dark mb-1">MRF System</h3>
+    <p class="text-muted mb-4">Sign in to request or approve</p>
+    <div class="text-start mb-3">
+      <label class="form-label">Identifier</label>
+      <div class="input-group">
+        <span class="input-group-text bg-white"><i class="bi bi-person"></i></span>
+        <input type="text" id="l-user" class="form-control" placeholder="Name or Email">
+      </div>
+    </div>
+    <div class="text-start mb-4">
+      <label class="form-label">Password</label>
+      <div class="input-group">
+        <span class="input-group-text bg-white"><i class="bi bi-lock"></i></span>
+        <input type="password" id="l-pass" class="form-control" placeholder="••••••••">
+      </div>
+    </div>
+    <button id="login-btn" onclick="doLogin()" class="btn btn-dark w-100 mb-3 fw-bold py-2">Sign In</button>
+    <div class="text-center">
+      <a href="#" onclick="doRecover(); return false;" class="text-decoration-none small fw-bold text-secondary">Forgot Password?</a>
+    </div>
+  </div>
+</div>
+
+<div id="app-section" style="display:none;">
+  <nav class="navbar">
+    <div class="container-fluid">
+      <div class="nav-left">
+        <? if (typeof logo1Url !== 'undefined' && logo1Url) { ?><img src="<?= logo1Url ?>" class="nav-logo" alt="Logo"><? } ?>
+      </div>
+      <div class="nav-center">
+        <span id="portal-title" class="navbar-brand">MRF Portal</span>
+      </div>
+      <div class="nav-right">
+        <? if (typeof logo2Url !== 'undefined' && logo2Url) { ?><img src="<?= logo2Url ?>" class="nav-logo" alt="Logo"><? } ?>
+      </div>
+    </div>
+  </nav>
+
+  <div class="user-bar">
+    <div class="text-end d-none d-md-block">
+      <div id="user-display" class="fw-bold text-dark small"></div>
+      <div class="text-muted" style="font-size: 0.75rem;"><i class="bi bi-person-badge text-dark"></i> <span id="role-display" class="text-uppercase fw-bold"></span></div>
+    </div>
+    <button onclick="doLogout()" class="btn btn-sm btn-outline-danger border-1 fw-bold"><i class="bi bi-box-arrow-right"></i> LOGOUT</button>
+  </div>
+
+  <div class="container pb-5 mt-4">
+    
+    <div id="requestor-view" style="display:none;">
+      
+      <ul class="nav nav-pills mb-4 justify-content-center" id="requestor-tabs">
+        <li class="nav-item me-2">
+          <a class="nav-link active fw-bold px-4" id="tab-new-req" href="#" onclick="switchReqTab('new'); return false;">New Request</a>
+        </li>
+        <li class="nav-item me-2">
+          <a class="nav-link fw-bold px-4" id="tab-justifications" href="#" onclick="switchReqTab('just'); return false;">
+            Pending Remarks / Justifications <span id="just-badge" class="badge bg-danger ms-1" style="display:none;">0</span>
+          </a>
+        </li>
+      </ul>
+
+      <div id="req-new-section">
+        <div class="mrf-card" id="mainForm">
+          <h5 class="mb-4 fw-bold border-bottom pb-2">Create New Request</h5>
+          <div class="row">
+            <div class="col-md-4 mb-3"><label>Project</label><select id="proj" class="form-select" onchange="loadPhases()"><option value="">-- Loading --</option></select></div>
+            <div class="col-md-4 mb-3"><label>Phase</label><select id="phase" class="form-select" onchange="loadScopes()" disabled><option value="">-- Select Project --</option></select></div>
+            <div class="col-md-4 mb-3"><label>Scope</label><select id="scope" class="form-select" onchange="loadItems()" disabled><option value="">-- Select Phase --</option></select></div>
+          </div>
+          <div class="row">
+            <div class="col-md-12 mb-3"><label>Upload Document / Specs (Optional)</label><input type="file" id="photo" class="form-control"></div>
+          </div>
+          <div class="table-responsive">
+            <table class="table table-bordered mt-3 align-middle">
+              <thead>
+                <tr>
+                  <th>Item Name</th>
+                  <th width="20%">Unit Toggle</th>
+                  <th>Allocated</th>
+                  <th>Balance</th>
+                  <th>Amount</th>
+                  <th>Remarks</th>
+                </tr>
+              </thead>
+              <tbody id="itemTable"></tbody>
+            </table>
+            <div id="consumablesAction" style="display:none;" class="mt-2 text-center">
+              <button class="btn btn-outline-dark btn-sm fw-bold" onclick="addConsumableRow()">+ ADD CONSUMABLE</button>
+            </div>
+          </div>
+          <div class="text-center mt-4"><button class="btn btn-dark-gray shadow-sm" id="submitBtn" onclick="submitData()">SUBMIT REQUISITION</button></div>
+        </div>
+
+        <div class="mrf-card mt-4" id="additionalItemsForm">
+          <h5 class="mb-3 fw-bold border-bottom pb-2">Additional Items (Outside BOQ)</h5>
+          <div class="table-responsive">
+            <table class="table table-bordered mt-3 align-middle">
+              <thead><tr><th>Item Name</th><th>Amount</th><th>Unit</th><th>Remarks</th><th class="col-del"></th></tr></thead>
+              <tbody id="additionalItemTable"></tbody>
+            </table>
+          </div>
+          <div class="row mt-3">
+            <div class="col-6"><button class="btn btn-outline-dark btn-sm fw-bold" onclick="addAdditionalRow()">+ ADD ITEM</button></div>
+          </div>
+        </div>
+      </div>
+
+      <div id="req-just-section" style="display:none;">
+        <div id="justifications-container">
+          <h5 class="mb-3 fw-bold text-info"><i class="bi bi-exclamation-circle-fill me-2"></i> Items Needing Your Justification</h5>
+          <div id="justifications-body"></div>
+        </div>
+      </div>
+
+    </div>
+    
+    <div id="approver-view" style="display:none;">
+      <div class="row mb-3">
+        <div class="col-12 text-end">
+          <label class="fw-bold me-1 small text-uppercase">Project:</label>
+          <select id="projectFilter" class="form-select form-select-sm d-inline-block w-auto border-dark fw-bold me-3" onchange="filterApproverQueue()">
+            <option value="ALL">All Projects</option>
+          </select>
+          <label class="fw-bold me-1 small text-uppercase">Date Range:</label>
+          <input type="date" id="startDate" class="form-control form-control-sm d-inline-block w-auto border-dark fw-bold" onchange="filterApproverQueue()">
+          <span class="fw-bold mx-1">-</span>
+          <input type="date" id="endDate" class="form-control form-control-sm d-inline-block w-auto border-dark fw-bold" onchange="filterApproverQueue()">
+          <button class="btn btn-sm btn-outline-dark ms-2 fw-bold" onclick="clearApproverFilters()">CLEAR</button>
+        </div>
+      </div>
+      <div class="row">
+        <div class="col-12">
+          <div class="p-4 bg-white border shadow-sm rounded">
+            <h5 class="mb-4 fw-bold border-bottom pb-2 text-uppercase">Pending MRF Requests (Allocated)</h5>
+            <div id="queueBody" style="max-height: 600px; overflow-y: auto; padding-right: 15px;"></div>
+          </div>
+        </div>
+        <div class="col-12 mt-5">
+          <div class="p-4 bg-white border shadow-sm border-warning rounded">
+            <h5 class="mb-4 fw-bold border-bottom pb-2 text-uppercase text-warning">Non-Allocated MRF (Additional Requests)</h5>
+            <div id="additionalQueueBody" style="max-height: 600px; overflow-y: auto; padding-right: 15px;"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal fade" id="pwdModal" data-bs-backdrop="static">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content shadow border-0" style="border-radius: 12px;">
+      <div class="modal-body p-5">
+        <h4 class="fw-bold mb-2 text-center">Setup Your Password</h4>
+        <div class="mb-3"><label class="form-label">New Password</label><input type="password" id="p1" class="form-control" placeholder="••••••••" onkeyup="checkReq()"></div>
+        <div class="mb-4"><label class="form-label">Confirm Password</label><input type="password" id="p2" class="form-control" placeholder="••••••••"></div>
+        <div class="p-3 bg-light rounded mb-4 border">
+          <div id="r-cap" class="text-danger small mb-1"><i class="bi bi-x-circle me-2"></i> At least one capital letter</div>
+          <div id="r-num" class="text-danger small mb-1"><i class="bi bi-x-circle me-2"></i> At least one number</div>
+          <div id="r-len" class="text-danger small"><i class="bi bi-x-circle me-2"></i> At least 8 characters</div>
+        </div>
+        <button id="p-btn" class="btn btn-dark w-100 py-2 fw-bold" onclick="savePwd()" disabled>SAVE & LOGIN</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  let currentUser = "";
+  let userEmail = "";
+  let userRole = "";
+  let globalBoqMap = {}; 
+  let userProjects = []; // Store allowed projects globally to filter fast for Approvers
+  const SYSTEM_MODE = "<?= mode ?>"; 
+  const SCRIPT_URL = "<?= typeof scriptUrl !== 'undefined' ? scriptUrl : '' ?>"; // Fixes white screen redirects
+
+  function toggleLoader(show) { document.getElementById('loader').style.display = show ? 'flex' : 'none'; }
+
+  window.onload = () => {
+    if (localStorage.getItem('mrfUser')) {
+      currentUser = localStorage.getItem('mrfUser');
+      userEmail = localStorage.getItem('mrfEmail');
+      userRole = localStorage.getItem('mrfRole') || 'employee';
+      startApp();
+    } else {
+      toggleLoader(false);
+      document.getElementById('login-section').style.display = 'flex';
+    }
+  };
+
+  function doLogin() {
+    const user = document.getElementById('l-user').value;
+    const pass = document.getElementById('l-pass').value;
+    if (!user || !pass) return Swal.fire('Error', 'Please enter your credentials.', 'error');
+
+    const btn = document.getElementById('login-btn');
+    const origText = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Signing In...';
+
+    toggleLoader(true);
+    
+    google.script.run
+      .withSuccessHandler(res => {
+        btn.disabled = false;
+        btn.innerHTML = origText;
+        
+        if(res.success) { 
+          currentUser = res.name; 
+          userEmail = res.email;
+          userRole = res.role;
+          
+          if(res.isNew) {
+            toggleLoader(false);
+            new bootstrap.Modal(document.getElementById('pwdModal')).show(); 
+          } else { 
+            localStorage.setItem('mrfUser', currentUser); 
+            localStorage.setItem('mrfEmail', userEmail);
+            localStorage.setItem('mrfRole', userRole);
+            
+            toggleLoader(false);
+            startApp(); 
+          } 
+        } else {
+          toggleLoader(false);
+          Swal.fire('Login Failed', res.error, 'error');
+        }
+      })
+      .withFailureHandler(err => {
+        btn.disabled = false;
+        btn.innerHTML = origText;
+        toggleLoader(false);
+        Swal.fire('Connection Error', 'Please check your internet connection.', 'error');
+      })
+      .loginUser(user, pass);
+  }
+
+  // Apps Script web apps run in a sandboxed iframe whose `sandbox` attribute
+  // typically allows top-navigation-by-user-activation. Since the user just
+  // clicked the LOGOUT button, that activation lets us navigate the top
+  // window to the deployment URL — a clean full-page load that bypasses any
+  // document.write'd sub-portal DOM. If that's blocked we fall back to a
+  // forced in-iframe navigation with a cache-buster.
+  function doLogout() {
+    try {
+      localStorage.removeItem('mrfUser');
+      localStorage.removeItem('mrfEmail');
+      localStorage.removeItem('mrfRole');
+    } catch (e) {}
+
+    const target = SCRIPT_URL || (window.location.href.split('?')[0]);
+    try {
+      window.top.location.href = target;
+      return;
+    } catch (e) {
+      // Top-navigation blocked — fall through to in-iframe reload.
+    }
+    window.location.replace(target + (target.indexOf('?') > -1 ? '&' : '?') + '_logout=' + Date.now());
+  }
+
+  function checkReq() {
+    const v = document.getElementById('p1').value; 
+    const hasCap = /[A-Z]/.test(v); 
+    const hasNum = /[0-9]/.test(v); 
+    const isLong = v.length >= 8;
+    
+    const updateUI = (id, met, tM, tU) => { 
+      const el = document.getElementById(id); 
+      el.className = met ? 'text-success small mb-1' : 'text-danger small mb-1'; 
+      el.innerHTML = met ? `<i class="bi bi-check-circle-fill me-2"></i> ${tM}` : `<i class="bi bi-x-circle me-2"></i> ${tU}`; 
+    };
+    updateUI('r-cap', hasCap, 'Capital letter OK', 'At least one capital letter'); 
+    updateUI('r-num', hasNum, 'Number OK', 'At least one number'); 
+    updateUI('r-len', isLong, 'Length OK', 'At least 8 characters');
+    document.getElementById('p-btn').disabled = !(hasCap && hasNum && isLong);
+  }
+
+  function savePwd() {
+    const p1 = document.getElementById('p1').value; 
+    const p2 = document.getElementById('p2').value;
+    if(p1 !== p2) return Swal.fire('Mismatch', 'Passwords do not match.', 'error');
+    
+    toggleLoader(true);
+    google.script.run
+      .withSuccessHandler(res => { 
+        toggleLoader(false); 
+        if(res === "SUCCESS") { 
+          localStorage.setItem('mrfUser', currentUser); 
+          localStorage.setItem('mrfEmail', userEmail);
+          localStorage.setItem('mrfRole', userRole);
+
+          bootstrap.Modal.getInstance(document.getElementById('pwdModal')).hide(); 
+          startApp(); 
+        } 
+        else { Swal.fire('Error', res, 'error'); } 
+      })
+      .withFailureHandler(err => { toggleLoader(false); Swal.fire('Error', 'Update failed.', 'error'); })
+      .finalizePassword(currentUser, p1);
+  }
+
+  function doRecover() {
+    Swal.fire({ title: 'Reset Password', input: 'text', inputLabel: 'Enter your name or email', inputPlaceholder: 'Identifier...', showCancelButton: true, confirmButtonText: 'Reset' }).then((result) => {
+      if (result.value) { 
+        toggleLoader(true); 
+        google.script.run.withSuccessHandler(res => { toggleLoader(false); Swal.fire('Result', res, 'info'); }).recoverPassword(result.value); 
+      }
+    });
+  }
+
+  function startApp() { 
+    document.getElementById('login-section').style.display = 'none'; 
+    document.getElementById('app-section').style.display = 'block'; 
+    document.getElementById('user-display').innerText = currentUser; 
+    document.getElementById('role-display').innerText = userRole; 
+    
+    let actualMode = SYSTEM_MODE;
+    let safeRole = (userRole || "").toString().toLowerCase().trim();
+    
+    // --- SECURE ACCOUNT-BASED ROUTING FIX ---
+    if (safeRole.includes('finance') || safeRole.includes('accounting') || safeRole.includes('encoder') || safeRole.includes('purchasing')) {
+        document.querySelector('#loader .text-uppercase').innerText = "Authenticating & Loading Portal...";
+        toggleLoader(true);
+        
+        google.script.run
+          .withSuccessHandler(html => {
+              if (html) {
+                  // Sub-portal HTML already has the user-bar + logout rendered server-side
+                  // (via currentUserName / currentUserRole template variables), so we just
+                  // write it as-is — no fragile DOM injection needed.
+                  document.open();
+                  document.write(html);
+                  document.close();
+              } else {
+                  toggleLoader(false);
+                  Swal.fire('Error', 'Unauthorized Access or Portal Missing.', 'error');
+              }
+          })
+          .withFailureHandler(err => {
+              toggleLoader(false);
+              Swal.fire('Error', 'Failed to load portal.', 'error');
+          })
+          .getSecurePortalHtml(userEmail);
+        return; 
+    }
+    // -------------------------------
+
+    if (safeRole.includes('approver')) {
+        actualMode = 'approve';
+    } 
+    else if (SYSTEM_MODE === 'approve' && !safeRole.includes('approver')) {
+       Swal.fire({
+         toast: true,
+         position: 'top-end',
+         icon: 'info',
+         title: 'Redirected to Request Portal',
+         text: 'Approver link detected, but you do not have Approver access.',
+         showConfirmButton: false,
+         timer: 4500
+       });
+       actualMode = 'request';
+    }
+
+    document.getElementById('portal-title').innerText = actualMode === 'approve' ? 'Approver Portal' : 'Requisition Portal';
+    
+    if (actualMode === 'approve') {
+       document.getElementById('requestor-view').style.display = 'none';
+       document.getElementById('approver-view').style.display = 'block';
+    } else {
+       document.getElementById('approver-view').style.display = 'none';
+       document.getElementById('requestor-view').style.display = 'block';
+    }
+
+    // Call UIData for BOTH Requestor & Approver (Cache logic implementation)
+    loadUIData(actualMode);
+  }
+
+  function switchReqTab(tab) {
+    const tabNew = document.getElementById('tab-new-req');
+    const tabJust = document.getElementById('tab-justifications');
+    const secNew = document.getElementById('req-new-section');
+    const secJust = document.getElementById('req-just-section');
+
+    tabNew.classList.remove('active');
+    tabJust.classList.remove('active');
+    secNew.style.display = 'none';
+    secJust.style.display = 'none';
+
+    if (tab === 'new') {
+      tabNew.classList.add('active');
+      secNew.style.display = 'block';
+    } else {
+      tabJust.classList.add('active');
+      secJust.style.display = 'block';
+    }
+  }
+
+  // --- REFACTORED TO HANDLE CACHING FOR BOTH REQUESTOR AND APPROVER (Solves dropdown issue) ---
+  function loadUIData(mode) {
+    toggleLoader(true);
+    google.script.run
+      .withSuccessHandler(data => {
+        globalBoqMap = data.boqMap; 
+        userProjects = data.projects; // Store assigned projects globally
+        
+        // 1. Populate Requestor Dropdown
+        const pSel = document.getElementById('proj');
+        if (pSel) {
+            pSel.innerHTML = '<option value="">-- Select Project --</option>';
+            if (data.projects.length) { data.projects.forEach(p => pSel.add(new Option(p, p))); } 
+            else { pSel.add(new Option("No Projects Assigned", "")); }
+        }
+
+        // 2. Populate Approver Dropdown Instantly
+        const filterSelect = document.getElementById('projectFilter');
+        if (filterSelect) {
+            filterSelect.innerHTML = '<option value="ALL">All Projects</option>';
+            if (data.projects.length) { data.projects.forEach(p => filterSelect.add(new Option(p, p))); }
+        }
+
+        renderJustifications(data.pendingJustifications);
+        
+        if (mode === 'approve') {
+            loadQueue(); // Queue will handle removing loader
+        } else {
+            toggleLoader(false);
+        }
+      })
+      .withFailureHandler(err => { toggleLoader(false); Swal.fire('Error', err.message, 'error'); })
+      .getInitialUIData(currentUser);
+  }
+
+  function renderJustifications(jList) {
+     const cont = document.getElementById('justifications-container');
+     const body = document.getElementById('justifications-body');
+     const badge = document.getElementById('just-badge');
+
+     if (!jList || jList.length === 0) { 
+       badge.style.display = 'none';
+       body.innerHTML = '<div class="alert alert-secondary text-center">You have no pending items to justify.</div>'; 
+       return; 
+     }
+     
+     badge.style.display = 'inline-block';
+     badge.innerText = jList.length;
+     
+     let html = jList.map((j, index) => `
+        <div class="justification-card p-3 shadow-sm" id="just-card-${index}" data-mrf="${j.mrfId}" data-item="${j.itemName}">
+           <div class="d-flex justify-content-between align-items-center mb-2">
+             <span class="badge bg-info text-dark fs-6">${j.mrfId} - ${j.project}</span>
+             <span class="text-muted small">${j.date}</span>
+           </div>
+           <p class="fw-bold mb-1 fs-5">${j.itemName}</p>
+           <div class="p-2 mb-3 bg-light border rounded"><strong>Approver Asked:</strong> ${j.question}</div>
+           <label class="form-label small text-muted">Your Reply / Justification</label>
+           <textarea class="form-control j-reply-input border-dark mb-3" rows="2" placeholder="Explain your request here..."></textarea>
+           <button class="btn btn-sm btn-info text-white fw-bold w-100" onclick="submitSingleJustification('${index}')">SUBMIT REPLY</button>
+        </div>
+     `).join('');
+     
+     body.innerHTML = html;
+  }
+
+  function submitSingleJustification(index) {
+     const card = document.getElementById(`just-card-${index}`);
+     const mrfId = card.dataset.mrf;
+     const itemName = card.dataset.item;
+     const reply = card.querySelector('.j-reply-input').value.trim();
+
+     if (!reply) return Swal.fire('Required', 'Please provide a reply for this justification.', 'warning');
+     
+     toggleLoader(true);
+     google.script.run
+        .withSuccessHandler(res => {
+           Swal.fire('Submitted', res, 'success').then(() => {
+              loadUIData('request');
+           });
+        })
+        .withFailureHandler(err => { toggleLoader(false); Swal.fire('Error', err.message, 'error'); })
+        .submitJustificationReply([{ mrfId: mrfId, itemName: itemName, reply: reply }]);
+  }
+
+  function resetRequestForm() {
+    document.getElementById('proj').selectedIndex = 0;
+    document.getElementById('proj').disabled = false;
+    ['phase', 'scope'].forEach(id => {
+      document.getElementById(id).innerHTML = `<option value="">-- Select ${id.charAt(0).toUpperCase() + id.slice(1)} --</option>`;
+      document.getElementById(id).disabled = id !== 'phase';
+    });
+    document.getElementById('photo').value = '';
+    document.getElementById('itemTable').innerHTML = '';
+    document.getElementById('additionalItemTable').innerHTML = '';
+    document.getElementById('submitBtn').disabled = false;
+  }
+
+  function loadPhases() {
+    const proj = document.getElementById('proj').value;
+    const pSel = document.getElementById('phase');
+    const sSel = document.getElementById('scope');
+    const tbody = document.getElementById('itemTable');
+    
+    pSel.innerHTML = '<option value="">-- Select Phase --</option>'; pSel.disabled = true;
+    sSel.innerHTML = '<option value="">-- Select Scope --</option>'; sSel.disabled = true;
+    tbody.innerHTML = '';
+    document.getElementById('consumablesAction').style.display = 'none';
+    
+    if (!proj || !globalBoqMap[proj]) return;
+
+    const phases = Object.keys(globalBoqMap[proj]).sort();
+    if (phases.length) {
+      phases.forEach(p => pSel.add(new Option(p, p)));
+      pSel.disabled = false;
+    } else {
+      pSel.add(new Option("No Phases Found", ""));
+    }
+  }
+
+  function loadScopes() {
+    const proj = document.getElementById('proj').value;
+    const phase = document.getElementById('phase').value;
+    const sSel = document.getElementById('scope');
+    const tbody = document.getElementById('itemTable');
+    const currentScope = sSel.value;
+
+    sSel.innerHTML = '<option value="">-- Select Scope --</option>'; sSel.disabled = true;
+    tbody.innerHTML = '';
+    document.getElementById('consumablesAction').style.display = 'none';
+    
+    if (!proj || !phase || !globalBoqMap[proj] || !globalBoqMap[proj][phase]) return;
+
+    const scopes = globalBoqMap[proj][phase];
+    if (scopes.length) {
+      scopes.forEach(s => sSel.add(new Option(s, s)));
+      
+      const stillValid = Array.from(sSel.options).some(opt => opt.value === currentScope);
+      if (currentScope && stillValid) {
+        sSel.value = currentScope;
+        loadItems(); 
+      }
+      sSel.disabled = false;
+    } else {
+      sSel.add(new Option("No Scopes Found", ""));
+    }
+  }
+
+  function loadItems() {
+    const proj = document.getElementById('proj').value;
+    const phase = document.getElementById('phase').value;
+    const scope = document.getElementById('scope').value;
+    const tbody = document.getElementById('itemTable');
+    const consumablesAction = document.getElementById('consumablesAction');
+    
+    tbody.innerHTML = ''; consumablesAction.style.display = 'none';
+    if (!proj || !phase || !scope) return;
+
+    if (scope.toLowerCase().trim() === 'consumables') {
+      consumablesAction.style.display = 'block';
+      for (let i = 0; i < 5; i++) { addConsumableRow(phase, scope); }
+    } else {
+      toggleLoader(true);
+      google.script.run
+         .withSuccessHandler(items => {
+           let curSub = null, curSubSub = null;
+           items.forEach(item => {
+             if (item.subScope !== curSub) {
+               tbody.insertAdjacentHTML('beforeend', `<tr class="table-dark text-white fw-bold"><td colspan="6" class="p-2">SUB-SCOPE: ${item.subScope}</td></tr>`);
+               curSub = item.subScope; curSubSub = null; 
+             }
+             if (item.subSubScope && item.subSubScope !== curSubSub) {
+               tbody.insertAdjacentHTML('beforeend', `<tr class="table-secondary fw-bold"><td colspan="6" class="ps-4 p-2">SUB-SUB SCOPE: ${item.subSubScope}</td></tr>`);
+               curSubSub = item.subSubScope;
+             }
+
+             const safeItemName = (item.itemName || "").toString().replace(/"/g, '&quot;');
+             const rowId = `row-${Date.now()}-${Math.random()}`;
+             
+             tbody.insertAdjacentHTML('beforeend', `<tr id="${rowId}" data-phase="${phase}" data-scope="${scope}" data-subscope="${item.subScope}" data-subsubscope="${item.subSubScope}" data-itemname="${safeItemName}" data-originalunit="${item.unit}" data-qty="${item.allocated}" data-mat="${item.matCost}" data-lab="${item.labCost}" data-tot="${item.totCost}">
+                 <td class="ps-5">${item.itemName}</td>
+                 <td class="text-center align-middle">
+                   <select class="form-select form-select-sm unit-toggle mx-auto" style="width:140px;" onchange="updateAllocationDisplay(this, '${rowId}')">
+                     <option value="${item.unit || ''}" selected>${item.unit || 'Select Unit'}</option>
+                     <option value="Labor Budget">Labor Budget</option><option value="Material Budget">Material Budget</option><option value="Total Budget">Total Budget</option>
+                   </select>
+                 </td>
+                 <td class="allocated fw-bold"></td><td class="balance fw-bold"></td>
+                 <td><input type="text" class="form-control form-control-sm qty-input text-center fw-bold" oninput="formatNumberInput(this); calculateBalance('${rowId}')"></td>
+                 <td><input type="text" class="form-control form-control-sm remarks-input"></td>
+               </tr>`);
+             updateAllocationDisplay(document.getElementById(rowId).querySelector('.unit-toggle'), rowId);
+           });
+           toggleLoader(false);
+         })
+         .withFailureHandler(err => { toggleLoader(false); Swal.fire('Error', err.message, 'error'); })
+         .getItemsForScope(proj, phase, scope);
+    }
+  }
+
+  function updateAllocationDisplay(selectEl, rowId) {
+    const row = document.getElementById(rowId);
+    const allocCell = row.querySelector('.allocated');
+    const u = selectEl.value;
+    if (u === 'Labor Budget') allocCell.textContent = formatToDisplayNumber(row.dataset.lab);
+    else if (u === 'Material Budget') allocCell.textContent = formatToDisplayNumber(row.dataset.mat);
+    else if (u === 'Total Budget') allocCell.textContent = formatToDisplayNumber(row.dataset.tot);
+    else allocCell.textContent = formatToDisplayNumber(row.dataset.qty);
+    calculateBalance(rowId);
+  }
+
+  function addConsumableRow(phase, scope) {
+    if (!phase) phase = document.getElementById('phase').value;
+    if (!scope) scope = document.getElementById('scope').value;
+    document.getElementById('itemTable').insertAdjacentHTML('beforeend', `<tr>
+        <td><input type="text" class="form-control form-control-sm item-name-input" placeholder="Item Name"></td>
+        <td><input type="text" class="form-control form-control-sm unit-input" placeholder="Unit"></td>
+        <td>-</td><td>-</td>
+        <td><input type="text" class="form-control form-control-sm qty-input text-center fw-bold" oninput="formatNumberInput(this)"></td>
+        <td><div class="d-flex gap-1"><input type="text" class="form-control form-control-sm remarks-input"><button class="btn btn-sm btn-outline-danger" onclick="this.closest('tr').remove()">✕</button></div></td>
+      </tr>`);
+  }
+
+  function formatNumberInput(el) {
+    let val = el.value.replace(/[^0-9.]/g, '');
+    const parts = val.split('.');
+    if (parts.length > 2) val = parts[0] + '.' + parts.slice(1).join('');
+    if (val) {
+      let f = val.split('.'); f[0] = f[0].replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+      el.value = f.join('.');
+    } else el.value = ''; 
+  }
+
+  function parseFormattedNumber(val) {
+    if (!val || val === 'N/A' || val === 'No Data') return 0;
+    return parseFloat(val.toString().replace(/,/g, '')) || 0;
+  }
+
+  function formatToDisplayNumber(val) {
+    const num = parseFloat(val);
+    return (isNaN(num) || val === 'N/A' || val === 'No Data') ? val : num.toLocaleString('en-US', {maximumFractionDigits: 2}); 
+  }
+
+  function calculateBalance(rowId) {
+    const row = document.getElementById(rowId);
+    const allocText = row.querySelector('.allocated').textContent;
+    const balCell = row.querySelector('.balance');
+    if (!allocText || allocText === 'N/A' || allocText === 'No Data') { balCell.textContent = allocText; return; }
+    const bal = parseFormattedNumber(allocText) - parseFormattedNumber(row.querySelector('.qty-input').value);
+    balCell.textContent = formatToDisplayNumber(bal);
+    balCell.style.color = bal < 0 ? 'red' : 'green';
+  }
+
+  function addAdditionalRow() {
+    document.getElementById('additionalItemTable').insertAdjacentHTML('beforeend', `<tr>
+        <td><input type="text" class="form-control form-control-sm item-name-input"></td>
+        <td><input type="text" class="form-control form-control-sm qty-input text-center fw-bold" oninput="formatNumberInput(this)"></td>
+        <td><input type="text" class="form-control form-control-sm unit-input"></td>
+        <td><input type="text" class="form-control form-control-sm remarks-input"></td>
+        <td class="col-del"><button class="btn-remove text-danger fw-bold" onclick="this.closest('tr').remove()">✕</button></td>
+      </tr>`);
+  }
+
+  function submitData() {
+    if (!currentUser) return Swal.fire('Error', 'Session expired. Reload page.', 'error');
+    
+    const boqPayload = { project: document.getElementById('proj').value, requestor: currentUser, email: userEmail, items: [], docType: 'BOQ Request' };
+    document.querySelectorAll('#itemTable tr').forEach(r => {
+      const qInp = r.querySelector('.qty-input');
+      if (!qInp) return; 
+      const qty = parseFormattedNumber(qInp.value);
+      if (qty > 0) {
+        let name, unit;
+        if (r.querySelector('.item-name-input')) {
+          name = r.querySelector('.item-name-input').value; unit = r.querySelector('.unit-input').value;
+        } else {
+          name = r.dataset.itemname;
+          unit = r.querySelector('.unit-toggle').value || r.dataset.originalunit;
+        }
+        if (name) boqPayload.items.push({ phase: r.dataset.phase, scope: r.dataset.scope, subScope: r.dataset.subscope, subSubScope: r.dataset.subsubscope, name: name, qty: qty, unit: unit, remarks: r.querySelector('.remarks-input').value });
+      }
+    });
+
+    const addPayload = { project: document.getElementById('proj').value, requestor: currentUser, email: userEmail, items: [], docType: 'Additional Request Outside BOQ' };
+    let hasInc = false;
+    document.querySelectorAll('#additionalItemTable tr').forEach(r => {
+      const qInp = r.querySelector('.qty-input');
+      if (qInp) {
+        const qty = parseFormattedNumber(qInp.value);
+        const name = r.querySelector('.item-name-input').value.trim();
+        const unit = r.querySelector('.unit-input').value.trim();
+        if (!name || qty <= 0 || !unit) { hasInc = true; r.style.border = '2px solid red'; } 
+        else { r.style.border = 'none'; addPayload.items.push({ phase: document.getElementById('phase').value || 'Additional', scope: 'Additional', subScope: '', subSubScope: '', name: name, qty: qty, unit: unit, remarks: r.querySelector('.remarks-input').value }); }
+      }
+    });
+
+    if (hasInc) return Swal.fire('Incomplete Entry', 'Complete required fields for Additional Items.', 'warning');
+    if (!boqPayload.items.length && !addPayload.items.length) return Swal.fire('Error', 'Add at least one item.', 'warning');
+    
+    toggleLoader(true);
+    document.getElementById('submitBtn').disabled = true;
+    const photo = document.getElementById('photo').files[0];
+    
+    const proc = (p) => {
+      return new Promise((res, rej) => {
+        if (p.items.length === 0) { res(null); return; }
+        const ok = (r) => { if (r && r.success) res(r); else rej(r ? r.error : "Error"); };
+        if (photo) {
+          const reader = new FileReader();
+          reader.onload = (e) => google.script.run.withSuccessHandler(ok).withFailureHandler(rej).submitMRF(p, { data: e.target.result.split(',')[1], fileName: photo.name, mimeType: photo.type });
+          reader.readAsDataURL(photo);
+        } else google.script.run.withSuccessHandler(ok).withFailureHandler(rej).submitMRF(p, null);
+      });
+    };
+
+    Promise.all([proc(boqPayload), proc(addPayload)])
+      .then(results => {
+        toggleLoader(false);
+        if (results.filter(r => r !== null).length > 0) Swal.fire('Success', 'Request submitted.', 'success').then(resetRequestForm);
+        else { Swal.fire('Info', 'Nothing submitted.', 'info'); document.getElementById('submitBtn').disabled = false; }
+      }).catch(err => { toggleLoader(false); document.getElementById('submitBtn').disabled = false; Swal.fire('Error', err, 'error'); });
+  }
+
+  function loadQueue() {
+    toggleLoader(true);
+    google.script.run.withSuccessHandler(allGroups => {
+      const body = document.getElementById('queueBody');
+      const addBody = document.getElementById('additionalQueueBody');
+      
+      // FIX: Ensure Approvers only see queues for projects they are assigned to
+      const groups = allGroups.filter(g => userProjects.includes(g.project));
+      
+      if(!groups || !groups.length) { 
+        body.innerHTML = '<div class="alert alert-secondary text-center">NO PENDING ITEMS.</div>'; 
+        addBody.innerHTML = '<div class="alert alert-secondary text-center">NO PENDING ADDITIONAL ITEMS.</div>';
+        toggleLoader(false); return; 
+      }
+      
+      body.innerHTML = ''; addBody.innerHTML = '';
+      
+      google.script.run.withSuccessHandler(metaList => {
+        let hasAlloc = false, hasAdd = false;
+        groups.forEach(g => {
+          const isAdd = g.docType === 'Additional Request Outside BOQ';
+          const cardClass = isAdd ? 'border-warning' : 'border-dark';
+          const headerClass = isAdd ? 'bg-warning text-dark' : 'bg-dark text-white';
+
+          let rows = g.items.map(it => {
+            const meta = metaList.find(m => m.id === g.id && m.name === it.name) || {scope:"", subScope:"", subSubScope:"", question:"", justification:""};
+            const safeName = (it.name || "").toString().replace(/"/g, '&quot;');
+            const formattedQty = formatToDisplayNumber(it.qty);
+            
+            let historyHtml = "";
+            if (it.remarks && it.remarks.toString().trim() !== "") {
+                historyHtml += `<div class="text-secondary fw-bold" style="font-size: 0.75rem; margin-bottom: 4px;"><i class="bi bi-info-square-fill"></i> Req Remarks: ${it.remarks}</div>`;
+            }
+            if (meta.justification) {
+                historyHtml += `<div class="p-2 bg-light border border-info rounded text-wrap text-break mt-1">
+                              <div class="text-info fw-bold" style="font-size: 0.7rem;"><i class="bi bi-question-circle-fill"></i> Q: ${meta.question}</div>
+                              <div class="text-dark fw-bold mt-1" style="font-size: 0.75rem;"><i class="bi bi-chat-left-text-fill"></i> Reply: ${meta.justification}</div>
+                            </div>`;
+            }
+            if (!historyHtml) {
+                historyHtml = `<div class="text-muted text-center" style="font-size: 0.8rem;">-</div>`;
+            }
+
+            return `<tr class="item-row" data-phase="${it.phase}" data-name="${safeName}" data-unit="${it.unit}" data-scope="${meta.scope}" data-subscope="${meta.subScope}" data-subsubscope="${meta.subSubScope}" data-justification="${(meta.justification||'').replace(/"/g, '&quot;')}" data-question="${(meta.question||'').replace(/"/g, '&quot;')}">
+              <td class="align-top"><strong>${safeName}</strong><br><small>${it.phase}</small></td>
+              <td class="align-top"><input type="text" class="final-qty form-control form-control-sm text-center fw-bold" value="${formattedQty}" oninput="formatNumberInput(this)"></td>
+              <td class="text-center align-top">${it.unit}</td>
+              <td class="align-top">${historyHtml}</td>
+              <td class="align-top"><input type="text" class="app-remarks form-control form-control-sm" placeholder="Approver Remarks" value=""></td>
+            </tr>`;
+          }).join('');
+          
+          const safeProject = (g.project || "").toString().replace(/'/g, "\\'");
+          
+          const cardHtml = `<div class="batch-card ${cardClass}" id="batch-${g.id}" data-project="${safeProject}" data-date="${g.date}">
+              <div class="batch-header ${headerClass}"><div><span class="badge bg-light text-dark me-2">${g.date}</span><span>${g.id}</span> <strong>${g.project}</strong></div><div class="small fw-bold">REQ: ${g.requestor}</div></div>
+              <table class="table table-sm table-bordered mb-0 align-middle">
+                <thead><tr><th width="28%">Item</th><th width="12%">Amount</th><th width="10%">Unit</th><th width="25%">History</th><th width="25%">Approver Remarks</th></tr></thead>
+                <tbody>${rows}</tbody>
+              </table>
+              <div class="batch-footer">
+                <button class="btn btn-info-req me-auto" onclick="requestInfoBatch('${g.id}')"><i class="bi bi-question-circle-fill"></i> REQUEST INFO</button>
+                <button class="btn btn-decline" onclick="declineBatch('${g.id}')">DECLINE</button>
+                <button class="btn btn-approve" onclick="approveBatch('${g.id}', '${safeProject}')">APPROVE</button>
+              </div>
+            </div>`;
+
+          if (isAdd) { addBody.innerHTML += cardHtml; hasAdd = true; } 
+          else { body.innerHTML += cardHtml; hasAlloc = true; }
+        });
+
+        if (!hasAlloc) body.innerHTML = '<div class="alert alert-secondary text-center">NO PENDING ALLOCATED ITEMS.</div>';
+        if (!hasAdd) addBody.innerHTML = '<div class="alert alert-secondary text-center">NO PENDING ADDITIONAL ITEMS.</div>';
+        
+        toggleLoader(false); 
+      }).getLogMetadata(groups.map(g => g.id.toString()));
+    }).getPendingQueueGrouped();
+  }
+
+  function filterApproverQueue() {
+      const projVal = document.getElementById('projectFilter').value;
+      const startVal = document.getElementById('startDate').value;
+      const endVal = document.getElementById('endDate').value;
+      const start = startVal ? new Date(startVal) : null;
+      const end = endVal ? new Date(endVal) : null;
+      if(start) start.setHours(0,0,0,0);
+      if(end) end.setHours(23,59,59,999);
+
+      document.querySelectorAll('.batch-card').forEach(card => {
+          let show = true;
+          if (projVal !== 'ALL' && card.dataset.project !== projVal) show = false;
+          let cardDate = new Date(card.dataset.date);
+          if (start && cardDate < start) show = false;
+          if (end && cardDate > end) show = false;
+          card.style.display = show ? 'block' : 'none';
+      });
+  }
+  function clearApproverFilters() { document.getElementById('projectFilter').value='ALL'; document.getElementById('startDate').value=''; document.getElementById('endDate').value=''; filterApproverQueue(); }
+
+  function approveBatch(mrfId, project) {
+    const rows = document.getElementById('batch-' + mrfId).querySelectorAll('.item-row');
+    let updates = [];
+    rows.forEach(row => {
+      updates.push({ 
+        project: project, phase: row.dataset.phase, name: row.dataset.name, unit: row.dataset.unit, 
+        finalQty: parseFormattedNumber(row.querySelector('.final-qty').value),
+        appRemarks: row.querySelector('.app-remarks').value || "", remarks: row.querySelector('.app-remarks').value || "",
+        scope: row.dataset.scope || "", subScope: row.dataset.subscope || "", subSubScope: row.dataset.subsubscope || ""
+      });
+    });
+    toggleLoader(true);
+    google.script.run.withSuccessHandler((res) => { 
+      toggleLoader(false);
+      if(res.indexOf("Error") > -1) Swal.fire('Warning', res, 'warning'); 
+      else Swal.fire('Success', 'Approved', 'success').then(loadQueue);
+    }).processBatchApproval(mrfId, updates, currentUser);
+  }
+
+  function declineBatch(mrfId) {
+    Swal.fire({
+      title: 'Decline Request', input: 'text', inputPlaceholder: 'Reason for decline...',
+      showCancelButton: true, confirmButtonText: 'Decline', confirmButtonColor: '#dc3545',
+      inputValidator: (v) => { if (!v) return 'You need to provide a reason!' }
+    }).then((result) => {
+      if (result.isConfirmed) {
+        const rows = document.getElementById('batch-' + mrfId).querySelectorAll('.item-row');
+        let remarks = [];
+        rows.forEach(row => remarks.push({ name: row.dataset.name, remarks: result.value }));
+        toggleLoader(true);
+        google.script.run.withSuccessHandler((res) => { 
+          toggleLoader(false); Swal.fire('Declined', res, 'info').then(loadQueue); 
+        }).processBatchDecline(mrfId, remarks, currentUser);
+      }
+    });
+  }
+
+  function requestInfoBatch(mrfId) {
+    const rows = document.getElementById('batch-' + mrfId).querySelectorAll('.item-row');
+    let html = `<p class="small text-muted mb-3">Add questions or remarks for the items you need justification on. Leave blank to ignore an item.</p>`;
+    
+    rows.forEach((r, idx) => {
+       let prevReply = r.dataset.justification;
+       let prevContextHtml = prevReply ? `<div class="text-success small fw-bold mb-2 bg-light p-2 rounded"><i class="bi bi-chat-left-text"></i> Last Reply: ${prevReply}</div>` : "";
+
+       html += `
+         <div class="mb-3 text-start border-bottom pb-3">
+           <label class="form-label fw-bold small text-dark mb-1">${r.dataset.name}</label>
+           ${prevContextHtml}
+           <input type="text" id="just-q-${idx}" data-name="${r.dataset.name}" class="form-control form-control-sm border-info" placeholder="Why is this requested?">
+         </div>
+       `;
+    });
+
+    Swal.fire({
+      title: 'Request Justification', html: html, showCancelButton: true, confirmButtonText: 'Send to Requestor', confirmButtonColor: '#0dcaf0',
+      preConfirm: () => {
+         let questions = [];
+         rows.forEach((r, idx) => {
+            const q = document.getElementById(`just-q-${idx}`).value.trim();
+            if (q) questions.push({ name: r.dataset.name, question: q });
+         });
+         if (questions.length === 0) Swal.showValidationMessage('You must provide a question for at least one item.');
+         return questions;
+      }
+    }).then((res) => {
+       if (res.isConfirmed) {
+          toggleLoader(true);
+          google.script.run.withSuccessHandler(response => {
+             toggleLoader(false);
+             Swal.fire('Sent', response, 'success').then(loadQueue);
+          }).withFailureHandler(e => { toggleLoader(false); Swal.fire('Error', e.message, 'error'); })
+          .processBatchJustify(mrfId, res.value, userEmail);
+       }
+    });
+  }
+</script>
+</body>
+</html>

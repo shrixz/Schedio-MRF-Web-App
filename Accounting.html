@@ -1,0 +1,1377 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css">
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.0/js/bootstrap.bundle.min.js"></script>
+  <style>
+    :root { 
+      --primary: #212529; 
+      --accent: #212529; 
+      --bg: #f8f9fa; 
+    }
+    body { font-family: 'Plus Jakarta Sans', Tahoma, sans-serif; background: var(--bg); color: #1a1a1a; margin: 0;}
+    
+    .batch-card { border: 2px solid #212529; border-radius: 4px; background: #fff; margin-bottom: 20px;}
+    .batch-header { background: #212529; color: #ffffff; padding: 12px 20px; display: flex; justify-content: space-between; align-items: center; border-radius: 2px 2px 0 0; }
+    .batch-body { padding: 20px; }
+    #loader { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(255,255,255,0.9); z-index: 10000; justify-content: center; align-items: center; flex-direction: column; }
+    .spinner-border { color: #212529 !important; }
+    
+    /* Mimicking MRF Index Header Styles */
+    .navbar { background: #ffffff; padding: 15px 40px; border-bottom: 5px solid var(--primary); box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1); }
+    .navbar .container-fluid { display: flex; justify-content: space-between; align-items: center; width: 100%; }
+    .nav-left, .nav-right { width: 150px; display: flex; align-items: center; }
+    .nav-left { justify-content: flex-start; }
+    .nav-right { justify-content: flex-end; }
+    .nav-center { flex-grow: 1; display: flex; justify-content: center; }
+    /* User bar sits BELOW the header in its own strip, right-aligned. */
+    .user-bar { background: #f8f9fa; border-bottom: 1px solid #dee2e6; padding: 10px 40px; display: flex; justify-content: flex-end; align-items: center; gap: 15px; }
+    
+    .navbar-brand { font-weight: 800; color: var(--primary) !important; font-size: 1.5rem; text-transform: uppercase; letter-spacing: 2px; margin: 0;}
+    .nav-logo { height: 60px; width: auto; }
+    
+    /* Boxed Tab Buttons Below Header */
+    .tab-container { display: flex; justify-content: center; gap: 15px; margin: 25px 0 10px 0; }
+    .tab-btn { padding: 10px 25px; background: #fff; border: 2px solid #212529; color: #212529; font-weight: bold; border-radius: 5px; cursor: pointer; transition: all 0.2s; text-transform: uppercase; font-size: 0.9rem;}
+    .tab-btn:hover { background: #e9ecef; }
+    .tab-btn.active { background: #212529; color: #fff; }
+
+    .content-section { display: none; padding: 20px 30px; }
+    .content-section.active { display: block; }
+    
+    .due-soon { border-left: 5px solid #dc3545 !important; background-color: #fff5f5; color: #dc3545; }
+    .due-soon strong { color: #dc3545; }
+  </style>
+</head>
+<body>
+<div id="loader"><div class="spinner-border" style="width: 3rem; height: 3rem;"></div><div class="mt-3 fw-bold text-uppercase">Processing...</div></div>
+
+<nav class="navbar">
+  <div class="container-fluid">
+    <div class="nav-left">
+      <? if (typeof logo1Url !== 'undefined' && logo1Url) { ?><img src="<?= logo1Url ?>" class="nav-logo" alt="Logo"><? } ?>
+    </div>
+    <div class="nav-center">
+      <span id="portal-title" class="navbar-brand">Accounting Portal</span>
+    </div>
+    <div class="nav-right">
+      <? if (typeof logo2Url !== 'undefined' && logo2Url) { ?><img src="<?= logo2Url ?>" class="nav-logo" alt="Logo"><? } ?>
+    </div>
+  </div>
+</nav>
+
+<div class="user-bar">
+  <? if (typeof currentUserName !== 'undefined' && currentUserName) { ?>
+  <div class="text-end d-none d-md-block">
+    <div class="fw-bold text-dark small"><?= currentUserName ?></div>
+    <div class="text-muted" style="font-size: 0.75rem;"><i class="bi bi-person-badge text-dark"></i> <span class="text-uppercase fw-bold"><?= currentUserRole ?></span></div>
+  </div>
+  <? } ?>
+  <button onclick="doLogout()" class="btn btn-sm btn-outline-danger border-1 fw-bold"><i class="bi bi-box-arrow-right"></i> LOGOUT</button>
+</div>
+
+<script>
+  // Apps Script web apps run in a sandboxed iframe whose `sandbox` attribute
+  // typically allows top-navigation-by-user-activation. Since the user just
+  // clicked the LOGOUT button, that activation lets us navigate the top
+  // window to the deployment URL — a clean full-page load that gets us back
+  // to the login screen. If top-navigation is blocked, fall back to an
+  // in-iframe replace with a cache-buster.
+  const SCRIPT_URL = "<?= typeof scriptUrl !== 'undefined' ? scriptUrl : '' ?>";
+  // Logged-in user's display name + role — passed from getSecurePortalHtml via
+  // template variables. Available to any front-end function that needs to
+  // attribute an action (e.g., BOQ "Uploader" column).
+  const currentUserName = "<?= typeof currentUserName !== 'undefined' ? currentUserName.toString().replace(/"/g, '&quot;') : '' ?>";
+  const currentUserRole = "<?= typeof currentUserRole !== 'undefined' ? currentUserRole.toString().replace(/"/g, '&quot;') : '' ?>";
+
+  function doLogout() {
+    try {
+      localStorage.removeItem('mrfUser');
+      localStorage.removeItem('mrfEmail');
+      localStorage.removeItem('mrfRole');
+    } catch (e) {}
+
+    const target = SCRIPT_URL || (window.location.href.split('?')[0]);
+    try {
+      window.top.location.href = target;
+      return;
+    } catch (e) {
+      // Top-navigation blocked — fall through.
+    }
+    window.location.replace(target + (target.indexOf('?') > -1 ? '&' : '?') + '_logout=' + Date.now());
+  }
+</script>
+
+<div class="container">
+    <div class="tab-container">
+        <div id="nav-slips" class="tab-btn active" onclick="showSection('slips')">PO & Deposit Slips</div>
+        <div id="nav-payments" class="tab-btn" onclick="showSection('payments'); loadPaymentsQueue();">Payments List</div>
+        <div id="nav-supplier-payments" class="tab-btn" onclick="showSection('supplier-payments'); loadSupplierPayments();">Supplier Payments</div>
+        <div id="nav-boq-adjust" class="tab-btn" onclick="showSection('boq-adjust'); loadBoqAdjustProjects();">BOQ Adjustments</div>
+        <div id="nav-expenses" class="tab-btn" onclick="showSection('expenses'); loadExpenses();">Expense Tracking</div>
+    </div>
+</div>
+
+<div class="main-container">
+    
+    <div id="section-slips" class="content-section active container">
+      <div class="row mb-1">
+        <div class="col-12 text-end">
+          <label class="fw-bold me-1 small text-uppercase">Date Range:</label>
+          <input type="date" id="startDate" class="form-control form-control-sm d-inline-block w-auto border-dark fw-bold" onchange="filterAccQueue()">
+          <span class="fw-bold mx-1">-</span>
+          <input type="date" id="endDate" class="form-control form-control-sm d-inline-block w-auto border-dark fw-bold" onchange="filterAccQueue()">
+          <button class="btn btn-sm btn-outline-dark ms-2" onclick="clearAccFilters()">CLEAR</button>
+        </div>
+      </div>
+      <div class="mt-2"><h5 class="mb-4 fw-bold border-bottom pb-2 text-uppercase">Pending Deposit Slips</h5><div id="accQueueBody"></div></div>
+    </div>
+
+    <div id="section-payments" class="content-section container">
+      <div class="row mb-1">
+        <div class="col-12 text-end">
+          <label class="fw-bold me-1 small text-uppercase">Project:</label>
+          <select id="payProjectFilter" class="form-select form-select-sm d-inline-block w-auto border-dark fw-bold me-2" onchange="filterPaymentsQueue()"><option value="ALL">All Projects</option></select>
+          <label class="fw-bold me-1 small text-uppercase">Due Filter:</label>
+          <select id="payStatusFilter" class="form-select form-select-sm d-inline-block w-auto border-dark fw-bold me-2" onchange="filterPaymentsQueue()">
+              <option value="ALL">All Pendings</option>
+              <option value="DUE_SOON">Due in <= 3 Days / Overdue</option>
+          </select>
+        </div>
+      </div>
+      <div class="mt-2"><h5 class="mb-4 fw-bold border-bottom pb-2 text-uppercase">Pending Payments Schedule</h5><div id="paymentsQueueBody"></div></div>
+    </div>
+
+    <div id="section-supplier-payments" class="content-section container">
+        <h2 class="mb-4 text-dark fw-bold">Supplier Payments</h2>
+        <p class="text-muted small">One row per payment term. Bank / Check Number / Payment Amount are filled in when a check is issued.</p>
+        <div class="row mb-3 g-2 align-items-end">
+            <div class="col-md-3">
+                <label class="form-label fw-bold small text-muted">Filter Supplier</label>
+                <select class="form-select border-dark" id="paySupplierFilter" onchange="filterSupplierPayments()">
+                    <option value="ALL">All Suppliers</option>
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label fw-bold small text-muted">Payment Status</label>
+                <select class="form-select border-dark" id="payLogStatusFilter" onchange="filterSupplierPayments()">
+                    <option value="ALL">All Statuses</option>
+                    <option value="UNPAID">Unpaid</option>
+                    <option value="PAID">Paid</option>
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label fw-bold small text-muted">Search PO / Term</label>
+                <input type="text" id="payLogSearchBox" class="form-control border-dark" placeholder="Search..." onkeyup="filterSupplierPayments()">
+            </div>
+            <div class="col-md-3 text-end">
+                <button class="btn btn-sm btn-outline-dark fw-bold" onclick="loadSupplierPayments()"><i class="bi bi-arrow-clockwise"></i> Refresh</button>
+            </div>
+        </div>
+
+        <div class="table-responsive bg-white border border-dark rounded shadow-sm">
+            <table class="table table-hover align-middle mb-0" style="font-size: 0.85rem;">
+                <thead class="table-dark text-white" style="font-size: 0.75rem; text-transform: uppercase;">
+                    <tr>
+                        <th>Purchase Order</th>
+                        <th>Payment Term</th>
+                        <th class="text-center">%</th>
+                        <th>Supplier</th>
+                        <th class="text-end">Invoiced Amount</th>
+                        <th>Due Date</th>
+                        <th>Bank</th>
+                        <th>Check #</th>
+                        <th class="text-end">Payment Amount</th>
+                        <th class="text-center">Action</th>
+                    </tr>
+                </thead>
+                <tbody id="supplierPaymentsBody">
+                    <tr><td colspan="10" class="text-center py-4 text-muted">Loading...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+    <div id="section-boq-adjust" class="content-section container">
+       <h2 class="mb-4 text-dark fw-bold">BOQ Adjustments & Additions</h2>
+      
+      <div class="row mb-4 g-2 align-items-end">
+        <div class="col-md-3">
+          <label class="form-label fw-bold small text-muted">Select Project</label>
+          <select class="form-select border-dark" id="boqAdjustProjectSelect" onchange="loadBoqAdjustItems()">
+            <option value="">— Select Project —</option>
+          </select>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label fw-bold small text-muted">Filter Phase</label>
+          <select class="form-select border-dark" id="boqPhaseFilter" onchange="updateScopeDropdown(); filterBoqTable()" disabled>
+            <option value="">— Select Project First —</option>
+          </select>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label fw-bold small text-muted">Filter Scope</label>
+          <select class="form-select border-dark" id="boqScopeFilter" onchange="filterBoqTable()" disabled>
+            <option value="">— Select Phase First —</option>
+          </select>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label fw-bold small text-muted">Search Items</label>
+          <input type="text" id="boqSearchBox" class="form-control border-dark" placeholder="Search by name..." onkeyup="filterBoqTable()">
+        </div>
+      </div>
+
+      <div id="boq-adjust-workspace" style="display:none;">
+        <div class="row g-4">
+          <div class="col-lg-8">
+            <div class="card shadow-sm border-0 h-100 border-top border-dark border-3">
+              <div class="card-header bg-white border-bottom py-3">
+                <h6 class="mb-0 fw-bold">Current BOQ Items (Select to Reduce/Adjust)</h6>
+              </div>
+              <div class="card-body p-0">
+                <div class="table-responsive" style="max-height: 600px; overflow-y: auto;">
+                  <table class="table table-hover align-middle mb-0" style="font-size: 0.85rem;">
+                    <thead class="table-light text-muted sticky-top" style="font-size: 0.75rem; text-transform: uppercase;">
+                      <tr>
+                        <th class="ps-3">Phase / Item</th>
+                        <th>Unit</th>
+                        <th class="text-end">Mat Cost</th>
+                        <th class="text-end">Lab Cost</th>
+                        <th class="text-center">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody id="boqAdjustTableBody">
+                      <tr><td colspan="5" class="text-center py-4 text-muted">Loading items...</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="col-lg-4">
+            <div class="card shadow-sm border-0 h-100 bg-light border-top border-success border-3">
+              <div class="card-body p-4">
+                <h6 class="fw-bold mb-3 text-success">➕ Add New Item</h6>
+                
+                <div class="mb-2">
+                  <label class="form-label small fw-bold text-muted">Phase <span>*</span></label>
+                  <select id="addBoqPhase" class="form-select form-select-sm" onchange="updateAddScopeDropdown()" disabled>
+                     <option value="">— Select Phase —</option>
+                  </select>
+                </div>
+                <div class="mb-2">
+                  <label class="form-label small fw-bold text-muted">Scope <span>*</span></label>
+                  <select id="addBoqScope" class="form-select form-select-sm" onchange="updateAddSubScopeDropdown()" disabled>
+                     <option value="">— Select Scope —</option>
+                  </select>
+                </div>
+                <div class="mb-2">
+                  <label class="form-label small fw-bold text-muted">Sub-Scope</label>
+                  <select id="addBoqSubScope" class="form-select form-select-sm" onchange="updateAddSubSubScopeDropdown()" disabled>
+                     <option value="">— Select Sub-Scope —</option>
+                  </select>
+                </div>
+                <div class="mb-2">
+                  <label class="form-label small fw-bold text-muted">Sub-Sub-Scope</label>
+                  <select id="addBoqSubSubScope" class="form-select form-select-sm" disabled>
+                     <option value="">— Select Sub-Sub-Scope —</option>
+                  </select>
+                </div>
+
+                <div class="mb-2">
+                  <label class="form-label small fw-bold text-muted">Item Description <span>*</span></label>
+                  <input type="text" id="addBoqDesc" class="form-control form-control-sm" placeholder="Item name...">
+                </div>
+                <div class="row g-2 mb-2">
+                  <div class="col-6">
+                    <label class="form-label small fw-bold text-muted">Unit <span>*</span></label>
+                    <input type="text" id="addBoqUnit" class="form-control form-control-sm" placeholder="e.g. sq.m, lot">
+                  </div>
+                  <div class="col-6">
+                    <label class="form-label small fw-bold text-muted">Quantity</label>
+                    <input type="text" id="addBoqQty" class="form-control form-control-sm" placeholder="0" oninput="formatCurrencyInput(this)">
+                  </div>
+                </div>
+                <div class="row g-2 mb-3">
+                  <div class="col-6">
+                    <label class="form-label small fw-bold text-muted">Materials Cost</label>
+                    <input type="text" id="addBoqMat" class="form-control form-control-sm" placeholder="₱0.00" oninput="formatCurrencyInput(this)">
+                  </div>
+                  <div class="col-6">
+                    <label class="form-label small fw-bold text-muted">Labor Cost</label>
+                    <input type="text" id="addBoqLab" class="form-control form-control-sm" placeholder="₱0.00" oninput="formatCurrencyInput(this)">
+                  </div>
+                </div>
+                <div class="mb-3">
+                  <label class="form-label small fw-bold text-muted">Reason for Addition <span>*</span></label>
+                  <textarea id="addBoqReason" class="form-control form-control-sm" rows="2" placeholder="Explain why this item is being added..."></textarea>
+                </div>
+                <button id="addBoqBtn" class="btn btn-success btn-sm w-100 fw-bold py-2" onclick="submitAddBoqItem()">Save New Item</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="section-expenses" class="content-section container">
+        <h2 class="mb-4 text-dark fw-bold">Expense Tracking</h2>
+
+        <div class="batch-card">
+          <div class="batch-body">
+            <h5 class="mb-4 fw-bold border-bottom pb-2"><i class="bi bi-cash-stack me-2"></i> Log New Expense</h5>
+
+            <div class="row mb-3">
+              <div class="col-md-12">
+                <label class="form-label fw-bold small text-muted d-block">Expense Category <span class="text-danger">*</span></label>
+                <div class="btn-group" role="group" aria-label="Expense Category">
+                  <input type="radio" class="btn-check" name="expCategory" id="expCatProject" value="Project" autocomplete="off" checked onchange="onExpenseCategoryChange()">
+                  <label class="btn btn-outline-dark fw-bold" for="expCatProject"><i class="bi bi-bricks me-1"></i> Project Expense</label>
+
+                  <input type="radio" class="btn-check" name="expCategory" id="expCatOffice" value="Office" autocomplete="off" onchange="onExpenseCategoryChange()">
+                  <label class="btn btn-outline-dark fw-bold" for="expCatOffice"><i class="bi bi-building me-1"></i> Office Expense</label>
+                </div>
+                <div class="small text-muted mt-2"><i class="bi bi-info-circle"></i> A single expense may be tagged to a Project OR a Company — not both.</div>
+              </div>
+            </div>
+
+            <div class="row">
+              <div class="col-md-6 mb-3" id="expProjectWrap">
+                <label class="form-label fw-bold small text-muted">Project Name <span class="text-danger">*</span></label>
+                <select id="expProject" class="form-select">
+                  <option value="">-- Select Project --</option>
+                </select>
+              </div>
+              <div class="col-md-6 mb-3" id="expCompanyWrap" style="display:none;">
+                <label class="form-label fw-bold small text-muted">Company Name <span class="text-danger">*</span></label>
+                <input type="text" id="expCompany" class="form-control" placeholder="e.g. ABC Corporation">
+              </div>
+              <div class="col-md-6 mb-3">
+                <label class="form-label fw-bold small text-muted">Expense Type <span class="text-danger">*</span></label>
+                <select id="expType" class="form-select">
+                  <option value="">-- Loading types --</option>
+                </select>
+                <div class="small text-muted mt-1" id="expTypeHelper"></div>
+              </div>
+            </div>
+
+            <div class="row">
+              <div class="col-md-12 mb-3">
+                <label class="form-label fw-bold small text-muted">Amount (₱) <span class="text-danger">*</span></label>
+                <input type="text" id="expAmount" class="form-control" placeholder="0.00" oninput="formatCurrencyInput(this)">
+              </div>
+            </div>
+
+            <div class="row">
+              <div class="col-md-12 mb-3">
+                <label class="form-label fw-bold small text-muted">Description <span class="text-danger">*</span></label>
+                <input type="text" id="expDescription" class="form-control" placeholder="Brief description of the expense">
+              </div>
+            </div>
+
+            <div class="row">
+              <div class="col-md-12 mb-3">
+                <label class="form-label fw-bold small text-muted">Notes (Optional)</label>
+                <textarea id="expNotes" class="form-control" rows="2" placeholder="Additional context or reference numbers..."></textarea>
+              </div>
+            </div>
+
+            <div class="row">
+              <div class="col-md-12 mb-3">
+                <label class="form-label fw-bold small text-muted">Receipt / Supporting Document (Optional)</label>
+                <input type="file" id="expReceipt" class="form-control">
+              </div>
+            </div>
+
+            <div class="text-center mt-3">
+              <button class="btn btn-dark fw-bold px-4" id="expSubmitBtn" onclick="submitExpenseLog()">SUBMIT EXPENSE</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="batch-card mt-4">
+          <div class="batch-body">
+            <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-3">
+              <h5 class="fw-bold mb-0"><i class="bi bi-list-ul me-2"></i> Logged Expenses</h5>
+              <div>
+                <button class="btn btn-sm btn-outline-dark fw-bold ms-2" onclick="loadExpenses()"><i class="bi bi-arrow-clockwise"></i></button>
+              </div>
+            </div>
+            <div class="table-responsive">
+              <table class="table table-sm table-bordered align-middle">
+                <thead class="table-dark">
+                  <tr>
+                    <th>Date</th>
+                    <th>Category</th>
+                    <th>Project / Company</th>
+                    <th>Type</th>
+                    <th>Description</th>
+                    <th class="text-end">Amount</th>
+                    <th>Receipt</th>
+                  </tr>
+                </thead>
+                <tbody id="expensesBody">
+                  <tr><td colspan="7" class="text-center text-muted py-3">No expenses logged yet.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="adjustBoqModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content border-0 shadow">
+      <div class="modal-header bg-warning bg-opacity-25">
+        <h5 class="modal-title fw-bold">Reduce / Adjust BOQ Item</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body p-4">
+        
+        <input type="hidden" id="adjRowIndex">
+        
+        <p class="fw-bold text-dark mb-1" id="adjItemName">Item Name</p>
+        <p class="small text-muted mb-4" id="adjPhaseName">Phase Name</p>
+
+        <div class="row g-3 mb-3">
+            <div class="col-12">
+                <label class="form-label small fw-bold text-muted">New Unit (Default)</label>
+                <input type="text" id="adjNewUnit" class="form-control form-control-sm fw-bold">
+            </div>
+          <div class="col-6">
+            <label class="form-label small fw-bold text-muted">New Materials Cost</label>
+            <input type="text" id="adjNewMat" class="form-control form-control-sm text-danger fw-bold" placeholder="0.00" oninput="formatCurrencyInput(this)">
+            <div class="small text-muted mt-1" id="adjOldMatDisplay">Old: ₱0.00</div>
+          </div>
+          <div class="col-6">
+            <label class="form-label small fw-bold text-muted">New Labor Cost</label>
+            <input type="text" id="adjNewLab" class="form-control form-control-sm text-danger fw-bold" placeholder="0.00" oninput="formatCurrencyInput(this)">
+            <div class="small text-muted mt-1" id="adjOldLabDisplay">Old: ₱0.00</div>
+          </div>
+        </div>
+        
+        <div class="mb-3">
+          <label class="form-label small fw-bold text-muted">Reason for Adjustment <span>*</span></label>
+          <textarea id="adjReason" class="form-control form-control-sm" rows="2" placeholder="e.g. Value engineering, error correction..."></textarea>
+        </div>
+        <p class="small text-muted fst-italic mt-2 mb-0">Note: To zero-out an item, set costs to 0.</p>
+      </div>
+      <div class="modal-footer border-top-0 pt-0">
+        <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-warning btn-sm fw-bold px-4" id="adjSubmitBtn" onclick="submitAdjustBoqItem()">Apply Adjustment</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  // --- UTILITY FORMATTERS ---
+  function formatCurrencyInput(el) {
+      let val = el.value.replace(/[^0-9.]/g, ''); 
+      const parts = val.split('.');
+      if (parts.length > 2) {
+          val = parts[0] + '.' + parts.slice(1).join('');
+      }
+      if (val) {
+          let formatParts = val.split('.');
+          formatParts[0] = formatParts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+          el.value = formatParts.join('.');
+      } else {
+          el.value = ''; 
+      }
+  }
+
+  function parseFormattedCurrency(val) {
+      if (!val) return 0;
+      const stripped = val.toString().replace(/,/g, '');
+      return parseFloat(stripped) || 0;
+  }
+  
+  function formatWithCommas(num) {
+      let parts = num.toString().split('.');
+      parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+      return parts.join('.');
+  }
+
+  function showSection(sectionId) {
+      document.querySelectorAll('.content-section').forEach(sec => sec.classList.remove('active'));
+      document.getElementById('section-' + sectionId).classList.add('active');
+      
+      document.querySelectorAll('.tab-btn').forEach(link => link.classList.remove('active'));
+      document.getElementById('nav-' + sectionId).classList.add('active');
+  }
+
+  function showLoader() { document.getElementById('loader').style.display = 'flex'; }
+  function hideLoader() { document.getElementById('loader').style.display = 'none'; }
+
+  window.onload = () => { 
+    loadAccQueue(); 
+  };
+
+  function loadAccQueue() {
+    showLoader(); 
+    google.script.run.withSuccessHandler(queue => {
+      const body = document.getElementById('accQueueBody');
+      if(!queue.length) { 
+        body.innerHTML = '<div class="alert alert-secondary text-center">NO ITEMS PENDING ACCOUNTING.</div>'; 
+        hideLoader(); return; 
+      }
+      body.innerHTML = '';
+      
+      queue.forEach(item => {
+        body.innerHTML += `
+          <div class="batch-card" data-date="${item.timestamp}">
+            <div class="batch-header">
+              <div><span class="badge bg-light text-dark me-2" style="font-size:0.75rem;">${item.timestamp}</span><span>${item.mrfId.replace("MRF","PO").replace("ARF","PO")}</span> <strong>${item.project}</strong></div>
+              <div class="small">SUPPLIER: ${item.supplier}</div>
+            </div>
+            <div class="batch-body row align-items-center">
+                <div class="col-md-6">
+                    <a href="${item.poLink}" target="_blank" class="btn btn-outline-dark btn-sm fw-bold">VIEW PO PDF</a>
+                </div>
+                <div class="col-md-6 text-end">
+                    <label class="form-label fw-bold small">Attach Deposit Slip</label>
+                    <input type="file" id="file-${item.row}" class="form-control form-control-sm d-inline-block w-auto">
+                    <button class="btn btn-primary btn-sm ms-2" onclick="submitToSupplier(${item.row}, '${item.mrfId}', '${item.supplier}')">SEND TO SUPPLIER</button>
+                </div>
+            </div>
+          </div>`;
+      });
+      hideLoader(); 
+    }).getAccountingQueue();
+  }
+
+  function filterAccQueue() {
+      const startVal = document.getElementById('startDate').value;
+      const endVal = document.getElementById('endDate').value;
+      
+      const start = startVal ? new Date(startVal) : null;
+      const end = endVal ? new Date(endVal) : null;
+      if(start) start.setHours(0,0,0,0);
+      if(end) end.setHours(23,59,59,999);
+
+      document.querySelectorAll('.batch-card').forEach(card => {
+          let show = true;
+          let cardDate = new Date(card.dataset.date);
+          if (start && cardDate < start) show = false;
+          if (end && cardDate > end) show = false;
+          
+          card.style.display = show ? 'block' : 'none';
+      });
+  }
+
+  function clearAccFilters() {
+      document.getElementById('startDate').value = '';
+      document.getElementById('endDate').value = '';
+      filterAccQueue();
+  }
+
+  function submitToSupplier(rowIdx, mrfId, supplierName) {
+    const fileInput = document.getElementById('file-' + rowIdx);
+    const file = fileInput.files[0];
+
+    showLoader();
+    
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        google.script.run.withSuccessHandler(res => {
+          hideLoader();
+          if(res.indexOf("Error") > -1) { Swal.fire('Warning', res, 'warning'); }
+          else { Swal.fire('Success', res, 'success').then(loadAccQueue); }
+        }).processAccountingUpload(rowIdx, mrfId, supplierName, { data: e.target.result.split(',')[1], fileName: file.name, mimeType: file.type }, currentUserName);
+      };
+      reader.readAsDataURL(file);
+    } else {
+        google.script.run.withSuccessHandler(res => {
+          hideLoader();
+          if(res.indexOf("Error") > -1) { Swal.fire('Warning', res, 'warning'); }
+          else { Swal.fire('Success', res, 'success').then(loadAccQueue); }
+        }).processAccountingUpload(rowIdx, mrfId, supplierName, null, currentUserName);
+    }
+  }
+
+  /* --- PAYMENTS FUNCTIONS --- */
+  let globalPaymentsData = [];
+
+  function loadPaymentsQueue() {
+      showLoader();
+      google.script.run.withSuccessHandler(data => {
+          globalPaymentsData = data;
+          
+          const projects = new Set();
+          data.forEach(g => projects.add(g.project));
+          const projSelect = document.getElementById('payProjectFilter');
+          projSelect.innerHTML = '<option value="ALL">All Projects</option>' + [...projects].sort().map(p => `<option value="${p}">${p}</option>`).join('');
+          
+          filterPaymentsQueue();
+          hideLoader();
+      }).getPaymentTermsQueue();
+  }
+
+  function filterPaymentsQueue() {
+      const projFilter = document.getElementById('payProjectFilter').value;
+      const statusFilter = document.getElementById('payStatusFilter').value;
+      const body = document.getElementById('paymentsQueueBody');
+      
+      let html = "";
+      let count = 0;
+      let today = new Date();
+      today.setHours(0,0,0,0);
+
+      globalPaymentsData.forEach(g => {
+          if (projFilter !== "ALL" && g.project !== projFilter) return;
+
+          let termsHtml = "";
+          let validTermsCount = 0;
+
+          g.termsList.forEach(term => {
+              let isDueSoon = false;
+              if (term.termDate) {
+                  let tDate = new Date(term.termDate);
+                  if (!isNaN(tDate.getTime())) {
+                      tDate.setHours(0,0,0,0);
+                      let diffDays = Math.ceil((tDate - today) / (1000 * 60 * 60 * 24));
+                      if (diffDays <= 3) isDueSoon = true;
+                  }
+              }
+
+              if (statusFilter === "DUE_SOON" && !isDueSoon) return;
+
+              validTermsCount++;
+              let dueClass = isDueSoon ? "due-soon" : "border-dark";
+              
+              let rowIndicesStr = term.rowIndices.join(',');
+
+              termsHtml += `
+                <div class="d-flex justify-content-between align-items-center mb-2 p-2 border rounded ${dueClass}">
+                   <div>
+                      <strong class="d-block text-uppercase">${term.termDesc}</strong>
+                      <span class="small fw-bold">Due Date: ${term.termDate || 'N/A'}</span><br>
+                      <span class="small text-muted" style="font-size:0.75rem;">Items: ${term.items.join(', ')}</span>
+                   </div>
+                   <div class="text-end">
+                      <strong class="d-block mb-1 fs-6">${formatMoney(term.totalAmount)}</strong>
+                      <button class="btn btn-sm btn-success fw-bold" onclick="markDeposited('${rowIndicesStr}')">MARK DEPOSITED</button>
+                   </div>
+                </div>
+              `;
+          });
+
+          if (validTermsCount > 0) {
+              count++;
+              html += `
+                <div class="batch-card mb-3">
+                  <div class="batch-header">
+                    <div><span class="badge bg-light text-dark me-2">${g.mrfId.replace("MRF","PO").replace("ARF","PO")}</span> <strong>${g.project}</strong></div>
+                    <div class="small">SUPPLIER: ${g.supplier}</div>
+                  </div>
+                  <div class="batch-body p-3">
+                    ${termsHtml}
+                  </div>
+                </div>
+              `;
+          }
+      });
+
+      if (count === 0) {
+          html = '<div class="alert alert-secondary text-center">NO PENDING PAYMENTS MATCHING FILTERS.</div>';
+      }
+      body.innerHTML = html;
+  }
+
+  function markDeposited(indicesStr) {
+      const rowIndices = indicesStr.split(',').map(Number);
+      Swal.fire({
+          title: 'Mark as Deposited?',
+          text: "This will remove this payment term from the queue.",
+          icon: 'question',
+          showCancelButton: true,
+          confirmButtonColor: '#28a745',
+          confirmButtonText: 'Yes, mark it!'
+      }).then((result) => {
+          if (result.isConfirmed) {
+              showLoader();
+              google.script.run.withSuccessHandler(res => {
+                  hideLoader();
+                  Swal.fire('Success', res, 'success').then(loadPaymentsQueue);
+              }).markPaymentDeposited(rowIndices);
+          }
+      });
+  }
+
+  // --- SUPPLIER PAYMENTS (one row per payment term) ---
+  let globalPaymentSchedule = [];
+  let bankListCache = [];
+
+  function loadSupplierPayments() {
+      showLoader();
+      // Bank list is small; refresh on tab open so newly-added banks appear without reload.
+      google.script.run.withSuccessHandler(list => { bankListCache = list || []; }).getBankList();
+
+      google.script.run.withSuccessHandler(data => {
+          globalPaymentSchedule = data || [];
+
+          const suppliers = new Set();
+          globalPaymentSchedule.forEach(r => { if (r.supplier) suppliers.add(r.supplier); });
+          const supSelect = document.getElementById('paySupplierFilter');
+          supSelect.innerHTML = '<option value="ALL">All Suppliers</option>' +
+              [...suppliers].sort().map(s => `<option value="${escapeAttr(s)}">${escapeHtml(s)}</option>`).join('');
+
+          filterSupplierPayments();
+          hideLoader();
+      }).withFailureHandler(err => {
+          hideLoader();
+          Swal.fire('Error', err.message || 'Failed to load payment schedule.', 'error');
+      }).getSupplierPaymentSchedule();
+  }
+
+  function filterSupplierPayments() {
+      const supFilter = document.getElementById('paySupplierFilter').value;
+      const statusFilter = document.getElementById('payLogStatusFilter').value;
+      const searchQ = document.getElementById('payLogSearchBox').value.toLowerCase();
+      const tbody = document.getElementById('supplierPaymentsBody');
+
+      let html = "";
+      let count = 0;
+
+      globalPaymentSchedule.forEach(r => {
+          if (supFilter !== "ALL" && r.supplier !== supFilter) return;
+          if (statusFilter === "PAID" && !r.isPaid) return;
+          if (statusFilter === "UNPAID" && r.isPaid) return;
+
+          const blob = `${r.purchaseOrder} ${r.paymentTerm} ${r.supplier}`.toLowerCase();
+          if (searchQ && !blob.includes(searchQ)) return;
+
+          count++;
+          const pctStr = (r.percent || 0).toFixed(r.percent % 1 === 0 ? 0 : 2) + '%';
+          const action = r.isPaid
+              ? `<button class="btn btn-sm btn-outline-dark fw-bold" onclick="openLogPaymentModal(${r.row})">Edit</button>`
+              : `<button class="btn btn-sm btn-primary fw-bold" onclick="openLogPaymentModal(${r.row})">LOG PAYMENT</button>`;
+          const paidBadge = r.isPaid ? '<span class="badge bg-success ms-1"><i class="bi bi-check-circle"></i></span>' : '';
+
+          html += `
+          <tr>
+              <td class="fw-bold">${escapeHtml(r.purchaseOrder)}${paidBadge}</td>
+              <td>${escapeHtml(r.paymentTerm)}</td>
+              <td class="text-center">${pctStr}</td>
+              <td>${escapeHtml(r.supplier)}</td>
+              <td class="text-end fw-bold">${formatMoney(r.invoicedAmount)}</td>
+              <td class="small">${escapeHtml(r.dueDate || 'TBD')}</td>
+              <td>${escapeHtml(r.bank || '-')}</td>
+              <td>${escapeHtml(r.checkNumber || '-')}</td>
+              <td class="text-end fw-bold ${r.isPaid ? 'text-success' : 'text-muted'}">${r.paymentAmount > 0 ? formatMoney(r.paymentAmount) : '-'}</td>
+              <td class="text-center">${action}</td>
+          </tr>`;
+      });
+
+      if (count === 0) html = '<tr><td colspan="10" class="text-center py-4 text-muted">No payment terms match your filters. Encoded POs will populate this list automatically.</td></tr>';
+      tbody.innerHTML = html;
+  }
+
+  function openLogPaymentModal(rowIdx) {
+      const r = globalPaymentSchedule.find(x => x.row === rowIdx);
+      if (!r) return Swal.fire('Error', 'Row not found.', 'error');
+
+      const bankOptions = (bankListCache.length
+          ? bankListCache.map(b => `<option value="${escapeAttr(b)}" ${b === r.bank ? 'selected' : ''}>${escapeHtml(b)}</option>`).join('')
+          : '<option value="" disabled>(No banks configured — add Category="Bank" rows in the Dropdowns sheet)</option>');
+
+      const html = `
+          <div class="text-start">
+              <div class="mb-1 small"><span class="text-muted">PO:</span> <strong>${escapeHtml(r.purchaseOrder)}</strong></div>
+              <div class="mb-1 small"><span class="text-muted">Term:</span> <strong>${escapeHtml(r.paymentTerm)}</strong></div>
+              <div class="mb-1 small"><span class="text-muted">Supplier:</span> <strong>${escapeHtml(r.supplier)}</strong></div>
+              <div class="mb-3 small"><span class="text-muted">Invoiced Amount:</span> <strong class="text-primary">${formatMoney(r.invoicedAmount)}</strong></div>
+
+              <label class="form-label small fw-bold mt-1">Bank</label>
+              <select id="payBank" class="form-select form-select-sm mb-2">
+                  <option value="">-- Select Bank --</option>
+                  ${bankOptions}
+              </select>
+
+              <label class="form-label small fw-bold">Check Number</label>
+              <input type="text" id="payCheck" class="form-control form-control-sm mb-2" value="${escapeAttr(r.checkNumber || '')}" placeholder="e.g. 100234">
+
+              <label class="form-label small fw-bold">Payment Amount</label>
+              <input type="text" id="payAmount" class="form-control form-control-sm mb-2 fw-bold" value="${r.paymentAmount > 0 ? formatWithCommas(r.paymentAmount.toFixed(2)) : formatWithCommas(r.invoicedAmount.toFixed(2))}" oninput="formatCurrencyInput(this)">
+          </div>
+      `;
+
+      Swal.fire({
+          title: 'Log Payment',
+          html: html,
+          showCancelButton: true,
+          confirmButtonText: r.isPaid ? 'Update' : 'Log Payment',
+          confirmButtonColor: '#212529',
+          preConfirm: () => {
+              const bank = document.getElementById('payBank').value.trim();
+              const check = document.getElementById('payCheck').value.trim();
+              const amount = parseFormattedCurrency(document.getElementById('payAmount').value);
+              if (!bank) { Swal.showValidationMessage('Bank is required.'); return false; }
+              if (!check) { Swal.showValidationMessage('Check Number is required.'); return false; }
+              if (amount <= 0) { Swal.showValidationMessage('Payment Amount must be positive.'); return false; }
+              return { row: rowIdx, bank, checkNumber: check, paymentAmount: amount };
+          }
+      }).then(res => {
+          if (res.isConfirmed) {
+              showLoader();
+              google.script.run.withSuccessHandler(response => {
+                  hideLoader();
+                  if (response.indexOf('Error') > -1) Swal.fire('Error', response, 'error');
+                  else Swal.fire('Success', response, 'success').then(loadSupplierPayments);
+              }).withFailureHandler(err => { hideLoader(); Swal.fire('Error', err.message, 'error'); })
+                .logSupplierPayment(res.value);
+          }
+      });
+  }
+
+  /* --- BOQ ADJUSTMENT FUNCTIONS --- */
+  let globalBoqData = [];
+
+  function formatMoney(amount) {
+     const num = parseFloat(amount);
+     if (isNaN(num)) return "No Data";
+     return "₱" + num.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
+  }
+
+  function loadBoqAdjustProjects() {
+     const projSelect = document.getElementById('boqAdjustProjectSelect');
+     if (projSelect.options.length > 1) return; 
+     
+     showLoader();
+     google.script.run.withSuccessHandler(projects => {
+         projSelect.innerHTML = '<option value="">— Select Project —</option>';
+         projects.forEach(p => projSelect.add(new Option(p, p)));
+         hideLoader();
+     }).getProjectList();
+  }
+
+  function loadBoqAdjustItems() {
+      const proj = document.getElementById('boqAdjustProjectSelect').value;
+      const workspace = document.getElementById('boq-adjust-workspace');
+      const phaseSelect = document.getElementById('boqPhaseFilter');
+      const scopeSelect = document.getElementById('boqScopeFilter');
+      
+      if (!proj) {
+          workspace.style.display = 'none';
+          phaseSelect.innerHTML = '<option value="">— Select Project First —</option>';
+          phaseSelect.disabled = true;
+          scopeSelect.innerHTML = '<option value="">— Select Phase First —</option>';
+          scopeSelect.disabled = true;
+          return;
+      }
+      
+      showLoader();
+      google.script.run.withSuccessHandler(data => {
+          globalBoqData = data || [];
+          workspace.style.display = 'block';
+          
+          const phases = new Set();
+          globalBoqData.forEach(item => {
+              if(item.phase) phases.add(item.phase);
+          });
+          
+          if (phases.size > 0) {
+              const phaseOptions = [...phases].sort().map(p => `<option value="${p}">${p}</option>`).join('');
+              phaseSelect.innerHTML = '<option value="">— Select Phase —</option>' + phaseOptions;
+              phaseSelect.disabled = false;
+              populateAddPhaseDropdown(phases);
+          } else {
+              phaseSelect.innerHTML = '<option value="">— No Phases Found —</option>';
+              phaseSelect.disabled = true;
+              populateAddPhaseDropdown(new Set());
+          }
+          
+          scopeSelect.innerHTML = '<option value="">— Select Phase First —</option>';
+          scopeSelect.disabled = true;
+          document.getElementById('boqSearchBox').value = '';
+          
+          filterBoqTable();
+          hideLoader();
+      }).getBOQDataForProject(proj);
+  }
+
+  // --- REFACTORED CASCADING DROPDOWNS MIMICKING MRF LOGIC ---
+  function populateAddPhaseDropdown(phases) {
+      const addPhaseSelect = document.getElementById('addBoqPhase');
+      if (phases.size > 0) {
+          addPhaseSelect.innerHTML = '<option value="">— Select Phase —</option>' + [...phases].sort().map(p => `<option value="${p}">${p}</option>`).join('');
+          addPhaseSelect.disabled = false;
+      } else {
+          addPhaseSelect.innerHTML = '<option value="">— No Phases Available —</option>';
+          addPhaseSelect.disabled = true;
+      }
+      updateAddScopeDropdown();
+  }
+
+  function updateAddScopeDropdown() {
+      const phaseVal = document.getElementById('addBoqPhase').value;
+      const scopeSelect = document.getElementById('addBoqScope');
+      const subScopeSelect = document.getElementById('addBoqSubScope');
+      const subSubScopeSelect = document.getElementById('addBoqSubSubScope');
+
+      scopeSelect.innerHTML = '<option value="">— Select Scope —</option>';
+      subScopeSelect.innerHTML = '<option value="">— Select Sub-Scope (Optional) —</option>';
+      subSubScopeSelect.innerHTML = '<option value="">— Select Sub-Sub-Scope (Optional) —</option>';
+
+      if (!phaseVal) {
+          scopeSelect.disabled = true;
+          subScopeSelect.disabled = true;
+          subSubScopeSelect.disabled = true;
+          return;
+      }
+
+      const scopes = new Set();
+      globalBoqData.forEach(item => {
+          if ((item.phase || "") === phaseVal && item.scope) scopes.add(item.scope);
+      });
+
+      if (scopes.size > 0) {
+          scopes.forEach(s => scopeSelect.add(new Option(s, s)));
+          scopeSelect.disabled = false;
+      } else {
+          scopeSelect.innerHTML = '<option value="">— No Scopes Found —</option>';
+          scopeSelect.disabled = true;
+      }
+      
+      subScopeSelect.disabled = true;
+      subSubScopeSelect.disabled = true;
+  }
+
+  function updateAddSubScopeDropdown() {
+      const phaseVal = document.getElementById('addBoqPhase').value;
+      const scopeVal = document.getElementById('addBoqScope').value;
+      const subScopeSelect = document.getElementById('addBoqSubScope');
+      const subSubScopeSelect = document.getElementById('addBoqSubSubScope');
+      
+      subScopeSelect.innerHTML = '<option value="">— Select Sub-Scope (Optional) —</option>';
+      subSubScopeSelect.innerHTML = '<option value="">— Select Sub-Sub-Scope (Optional) —</option>';
+
+      if (!scopeVal) {
+          subScopeSelect.disabled = true;
+          subSubScopeSelect.disabled = true;
+          return;
+      }
+
+      const subScopes = new Set();
+      globalBoqData.forEach(item => {
+          if ((item.phase || "") === phaseVal && (item.scope || "") === scopeVal && item.subScope) subScopes.add(item.subScope);
+      });
+
+      if (subScopes.size > 0) {
+          subScopes.forEach(ss => subScopeSelect.add(new Option(ss, ss)));
+          subScopeSelect.disabled = false;
+      } else {
+          subScopeSelect.innerHTML = '<option value="">— No Sub-Scopes Found —</option>';
+          subScopeSelect.disabled = true;
+      }
+      
+      subSubScopeSelect.disabled = true;
+  }
+
+  function updateAddSubSubScopeDropdown() {
+      const phaseVal = document.getElementById('addBoqPhase').value;
+      const scopeVal = document.getElementById('addBoqScope').value;
+      const subScopeVal = document.getElementById('addBoqSubScope').value;
+      const subSubScopeSelect = document.getElementById('addBoqSubSubScope');
+
+      subSubScopeSelect.innerHTML = '<option value="">— Select Sub-Sub-Scope (Optional) —</option>';
+
+      if (!subScopeVal) {
+          subSubScopeSelect.disabled = true;
+          return;
+      }
+
+      const subSubScopes = new Set();
+      globalBoqData.forEach(item => {
+          if ((item.phase || "") === phaseVal && (item.scope || "") === scopeVal && (item.subScope || "") === subScopeVal && item.subSubScope) subSubScopes.add(item.subSubScope);
+      });
+
+      if (subSubScopes.size > 0) {
+          subSubScopes.forEach(sss => subSubScopeSelect.add(new Option(sss, sss)));
+          subSubScopeSelect.disabled = false;
+      } else {
+          subSubScopeSelect.innerHTML = '<option value="">— No Sub-Sub-Scopes Found —</option>';
+          subSubScopeSelect.disabled = true;
+      }
+  }
+
+  function updateScopeDropdown() {
+      const phaseFilter = document.getElementById('boqPhaseFilter').value;
+      const scopeSelect = document.getElementById('boqScopeFilter');
+      
+      scopeSelect.innerHTML = '<option value="">— Select Scope —</option>';
+
+      if (!phaseFilter) {
+          scopeSelect.innerHTML = '<option value="">— Select Phase First —</option>';
+          scopeSelect.disabled = true;
+          filterBoqTable();
+          return;
+      }
+
+      const scopes = new Set();
+      globalBoqData.forEach(item => {
+          if ((item.phase || "") === phaseFilter && item.scope) scopes.add(item.scope);
+      });
+
+      if (scopes.size > 0) {
+          scopes.forEach(s => scopeSelect.add(new Option(s, s)));
+          scopeSelect.disabled = false;
+      } else {
+          scopeSelect.innerHTML = '<option value="">— No Scopes Found —</option>';
+          scopeSelect.disabled = true;
+      }
+      filterBoqTable();
+  }
+
+  function filterBoqTable() {
+      const phaseFilter = document.getElementById('boqPhaseFilter').value;
+      const scopeFilter = document.getElementById('boqScopeFilter').value;
+      const searchQ = document.getElementById('boqSearchBox').value.toLowerCase();
+      const tableBody = document.getElementById('boqAdjustTableBody');
+      
+      let html = "";
+      let count = 0;
+      let currentSubScope = null;
+      let currentSubSubScope = null;
+      
+      globalBoqData.forEach(item => {
+          const p = (item.phase || "");
+          const s = (item.scope || "");
+          const ss = (item.subScope || "");
+          const sss = (item.subSubScope || "");
+          const name = (item.item || "");
+          
+          if (phaseFilter && p !== phaseFilter) return;
+          if (scopeFilter && s !== scopeFilter) return;
+          
+          const searchStr = `${s} ${ss} ${sss} ${name}`.toLowerCase();
+          if (searchQ && !searchStr.includes(searchQ)) return;
+          
+          count++;
+
+          if (item.subScope !== currentSubScope) {
+            html += `<tr class="table-dark text-white fw-bold"><td colspan="5" class="bg-dark text-white p-2">SUB-SCOPE: ${item.subScope || 'General'}</td></tr>`;
+            currentSubScope = item.subScope;
+            currentSubSubScope = null; 
+          }
+          if (item.subSubScope && item.subSubScope !== currentSubSubScope) {
+            html += `<tr class="table-secondary fw-bold"><td colspan="5" class="ps-4 p-2">SUB-SUB SCOPE: ${item.subSubScope}</td></tr>`;
+            currentSubSubScope = item.subSubScope;
+          }
+          
+          const safeName = name.replace(/"/g, '&quot;');
+          const safePhase = p.replace(/"/g, '&quot;');
+          const safeUnit = (item.unit || "").replace(/"/g, '&quot;');
+          
+          html += `
+          <tr>
+              <td class="ps-5">
+                  <strong>${safeName}</strong><br>
+                  <small class="text-muted fw-bold">${safePhase}</small>
+              </td>
+              <td>${safeUnit}</td>
+              <td class="text-end">${formatMoney(item.matCost)}</td>
+              <td class="text-end">${formatMoney(item.labCost)}</td>
+              <td class="text-center">
+                  <button class="btn btn-outline-dark btn-sm fw-bold" onclick="openAdjustModal(${item.rowIdx}, '${safeName}', '${safePhase}', '${safeUnit}', '${item.matCost}', '${item.labCost}')">Adjust</button>
+              </td>
+          </tr>
+          `;
+      });
+      if (count === 0) html = '<tr><td colspan="5" class="text-center py-4 text-muted">No items found matching your filters.</td></tr>';
+      tableBody.innerHTML = html;
+  }
+
+  function openAdjustModal(rowIdx, itemName, phaseName, unit, matCost, labCost) {
+      document.getElementById('adjRowIndex').value = rowIdx;
+      document.getElementById('adjItemName').innerText = itemName;
+      document.getElementById('adjPhaseName').innerText = phaseName;
+      document.getElementById('adjNewUnit').value = unit;
+      document.getElementById('adjNewMat').value = formatWithCommas(parseFloat(matCost) || 0);
+      document.getElementById('adjNewLab').value = formatWithCommas(parseFloat(labCost) || 0);
+      document.getElementById('adjOldMatDisplay').innerText = "Old: " + formatMoney(matCost);
+      document.getElementById('adjOldLabDisplay').innerText = "Old: " + formatMoney(labCost);
+      document.getElementById('adjReason').value = '';
+      new bootstrap.Modal(document.getElementById('adjustBoqModal')).show();
+  }
+
+  function submitAdjustBoqItem() {
+      const rowIdx = document.getElementById('adjRowIndex').value;
+      const newUnit = document.getElementById('adjNewUnit').value.trim();
+      const newMat = parseFormattedCurrency(document.getElementById('adjNewMat').value);
+      const newLab = parseFormattedCurrency(document.getElementById('adjNewLab').value);
+      const reason = document.getElementById('adjReason').value.trim();
+      
+      if(!reason) return Swal.fire("Required", "Please provide a reason for the adjustment.", "warning");
+      if(!newUnit) return Swal.fire("Required", "Unit cannot be empty.", "warning");
+
+      showLoader();
+      google.script.run.withSuccessHandler(res => {
+          hideLoader();
+          bootstrap.Modal.getInstance(document.getElementById('adjustBoqModal')).hide();
+          Swal.fire("Success", res, "success").then(loadBoqAdjustItems);
+      }).withFailureHandler(err => {
+          hideLoader();
+          Swal.fire("Error", err.message, "error");
+      }).updateBOQItemCost(rowIdx, newMat, newLab, newUnit, reason);
+  }
+
+  function submitAddBoqItem() {
+      const project = document.getElementById('boqAdjustProjectSelect').value;
+      const phase = document.getElementById('addBoqPhase').value.trim();
+      const scope = document.getElementById('addBoqScope').value.trim();
+      const subScope = document.getElementById('addBoqSubScope').value.trim();
+      const subSubScope = document.getElementById('addBoqSubSubScope').value.trim();
+      
+      const desc = document.getElementById('addBoqDesc').value.trim();
+      const unit = document.getElementById('addBoqUnit').value.trim();
+      const qty = parseFormattedCurrency(document.getElementById('addBoqQty').value);
+      const mat = parseFormattedCurrency(document.getElementById('addBoqMat').value);
+      const lab = parseFormattedCurrency(document.getElementById('addBoqLab').value);
+      const reason = document.getElementById('addBoqReason').value.trim();
+      
+      if(!phase || !scope || !desc || !unit || !reason) {
+          return Swal.fire("Missing Fields", "Please complete all required fields marked with *.", "warning");
+      }
+      
+      showLoader();
+      google.script.run.withSuccessHandler(res => {
+          hideLoader();
+          Swal.fire("Added", "Item successfully added to BOQ.", "success").then(() => {
+              document.getElementById('addBoqDesc').value = "";
+              document.getElementById('addBoqUnit').value = "";
+              document.getElementById('addBoqQty').value = "";
+              document.getElementById('addBoqMat').value = "";
+              document.getElementById('addBoqLab').value = "";
+              document.getElementById('addBoqReason').value = "";
+              loadBoqAdjustItems();
+          });
+      }).withFailureHandler(err => {
+          hideLoader();
+          Swal.fire("Error", err.message, "error");
+      }).addBOQItem({ project, phase, scope, subScope, subSubScope, desc, unit, qty, mat, lab, reason, uploader: (typeof currentUserName !== 'undefined' && currentUserName) ? currentUserName : 'Accounting Portal' });
+  }
+
+  function escapeHtml(str) {
+      if (str === null || str === undefined) return '';
+      return str.toString().replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  function escapeAttr(str) {
+      if (str === null || str === undefined) return '';
+      return str.toString().replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;');
+  }
+
+  // --- EXPENSE LOGGING (moved from Employee Portal) ---
+  let globalExpensesData = [];
+  let accExpenseTypesCache = [];
+  let logExpProjectListCache = [];
+
+  function loadExpenses() {
+      showLoader();
+      // Load expense types
+      google.script.run.withSuccessHandler(types => {
+          accExpenseTypesCache = types || [];
+          renderExpenseTypeDropdown();
+      }).withFailureHandler(() => {
+          accExpenseTypesCache = [];
+          renderExpenseTypeDropdown();
+      }).getExpenseTypes();
+
+      // Load project list for the Project dropdown
+      if (!logExpProjectListCache.length) {
+          google.script.run.withSuccessHandler(list => {
+              logExpProjectListCache = list || [];
+              populateExpenseProjectDropdown();
+          }).withFailureHandler(() => {}).getProjectList();
+      } else {
+          populateExpenseProjectDropdown();
+      }
+
+      // Load logged expenses
+      google.script.run.withSuccessHandler(data => {
+          globalExpensesData = data || [];
+          renderExpenses();
+          hideLoader();
+      }).withFailureHandler(err => {
+          hideLoader();
+          Swal.fire('Error', err.message || 'Failed to load expenses.', 'error');
+      }).getAllExpenses();
+  }
+
+  function populateExpenseProjectDropdown() {
+      const sel = document.getElementById('expProject');
+      if (!sel) return;
+      const current = sel.value;
+      sel.innerHTML = '<option value="">-- Select Project --</option>';
+      logExpProjectListCache.forEach(p => sel.add(new Option(p, p)));
+      if (current) {
+          const opts = Array.from(sel.options).map(o => o.value);
+          if (opts.includes(current)) sel.value = current;
+      }
+  }
+
+  function renderExpenseTypeDropdown() {
+      const sel = document.getElementById('expType');
+      if (!sel) return;
+      const currentVal = sel.value;
+      const isProject = document.getElementById('expCatProject').checked;
+      const category = isProject ? 'Project' : 'Office';
+
+      sel.innerHTML = '<option value="">-- Select Type --</option>';
+
+      if (!accExpenseTypesCache.length) {
+          sel.innerHTML = '<option value="">-- No types configured --</option>';
+          return;
+      }
+
+      accExpenseTypesCache.forEach(t => {
+          const allowed = (t.allowedCategories || []).indexOf(category) !== -1;
+          const opt = new Option(t.name + (allowed ? '' : ' (N/A for ' + category + ')'), t.name);
+          if (!allowed) opt.disabled = true;
+          sel.add(opt);
+      });
+
+      if (currentVal) {
+          const matchOpt = Array.from(sel.options).find(o => o.value === currentVal);
+          if (matchOpt && !matchOpt.disabled) sel.value = currentVal;
+      }
+  }
+
+  function onExpenseCategoryChange() {
+      const isProject = document.getElementById('expCatProject').checked;
+      const projWrap = document.getElementById('expProjectWrap');
+      const compWrap = document.getElementById('expCompanyWrap');
+      const helper = document.getElementById('expTypeHelper');
+
+      if (isProject) {
+          projWrap.style.display = '';
+          compWrap.style.display = 'none';
+          document.getElementById('expCompany').value = '';
+          helper.innerText = '';
+      } else {
+          projWrap.style.display = 'none';
+          compWrap.style.display = '';
+          document.getElementById('expProject').value = '';
+          helper.innerText = 'Types restricted to "Project" only are unavailable here.';
+      }
+
+      renderExpenseTypeDropdown();
+  }
+
+  function submitExpenseLog() {
+      const category = document.querySelector('input[name="expCategory"]:checked').value;
+      const projectName = document.getElementById('expProject').value.trim();
+      const companyName = document.getElementById('expCompany').value.trim();
+      const expenseType = document.getElementById('expType').value.trim();
+      const amount = parseFormattedCurrency(document.getElementById('expAmount').value);
+      const description = document.getElementById('expDescription').value.trim();
+      const notes = document.getElementById('expNotes').value.trim();
+
+      if (category === 'Project' && !projectName) return Swal.fire('Required', 'Please select a Project Name.', 'warning');
+      if (category === 'Office' && !companyName) return Swal.fire('Required', 'Please enter the Company Name.', 'warning');
+      if (projectName && companyName) return Swal.fire('Conflict', 'An expense cannot be tagged to both a Project and a Company.', 'warning');
+      if (!expenseType) return Swal.fire('Required', 'Please select an Expense Type.', 'warning');
+
+      const typeDef = (accExpenseTypesCache || []).find(t => t.name.toLowerCase() === expenseType.toLowerCase());
+      if (typeDef && (typeDef.allowedCategories || []).indexOf(category) === -1) {
+          return Swal.fire('Invalid', '"' + typeDef.name + '" is not allowed for ' + category + ' expenses.', 'warning');
+      }
+
+      if (!description) return Swal.fire('Required', 'Please provide a description.', 'warning');
+      if (!amount || amount <= 0) return Swal.fire('Required', 'Please enter a valid amount.', 'warning');
+
+      const payload = {
+          category: category,
+          projectName: category === 'Project' ? projectName : '',
+          companyName: category === 'Office' ? companyName : '',
+          expenseType: expenseType,
+          description: description,
+          amount: amount,
+          notes: notes,
+          submittedBy: (typeof currentUserName !== 'undefined' && currentUserName) ? currentUserName : '',
+          submitterEmail: ''
+      };
+
+      const btn = document.getElementById('expSubmitBtn');
+      btn.disabled = true;
+      showLoader();
+
+      const receiptInput = document.getElementById('expReceipt');
+      const receipt = receiptInput && receiptInput.files ? receiptInput.files[0] : null;
+
+      const finish = (res) => {
+          hideLoader();
+          btn.disabled = false;
+          if (res && res.success) {
+              Swal.fire('Submitted', 'Expense ' + res.id + ' logged successfully.', 'success').then(() => {
+                  resetExpenseForm();
+                  loadExpenses();
+              });
+          } else {
+              Swal.fire('Error', (res && res.error) ? res.error : 'Failed to log expense.', 'error');
+          }
+      };
+
+      const fail = (err) => {
+          hideLoader();
+          btn.disabled = false;
+          Swal.fire('Error', err && err.message ? err.message : 'Submission failed.', 'error');
+      };
+
+      if (receipt) {
+          const reader = new FileReader();
+          reader.onload = (e) => {
+              google.script.run.withSuccessHandler(finish).withFailureHandler(fail)
+                  .submitExpenseLog(payload, { data: e.target.result.split(',')[1], fileName: receipt.name, mimeType: receipt.type });
+          };
+          reader.readAsDataURL(receipt);
+      } else {
+          google.script.run.withSuccessHandler(finish).withFailureHandler(fail).submitExpenseLog(payload, null);
+      }
+  }
+
+  function resetExpenseForm() {
+      document.getElementById('expCatProject').checked = true;
+      onExpenseCategoryChange();
+      document.getElementById('expProject').selectedIndex = 0;
+      document.getElementById('expCompany').value = '';
+      document.getElementById('expType').value = '';
+      document.getElementById('expAmount').value = '';
+      document.getElementById('expDescription').value = '';
+      document.getElementById('expNotes').value = '';
+      const r = document.getElementById('expReceipt');
+      if (r) r.value = '';
+  }
+
+  function renderExpenses() {
+      const tbody = document.getElementById('expensesBody');
+      if (!tbody) return;
+      const rows = globalExpensesData.slice();
+
+      if (!rows.length) {
+          tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-3">No expenses to show.</td></tr>';
+          return;
+      }
+      tbody.innerHTML = rows.map(r => {
+          const tag = (r.category === 'Project') ? (r.projectName || '-') : (r.companyName || '-');
+          const receipt = r.receiptLink ? `<a href="${r.receiptLink}" target="_blank" class="btn btn-sm btn-outline-dark">View</a>` : '<span class="text-muted">-</span>';
+          return `<tr>
+              <td><small>${escapeHtml(r.timestamp)}</small><br><span class="text-muted small">${escapeHtml(r.expenseId)}</span></td>
+              <td>${escapeHtml(r.category)}</td>
+              <td><strong>${escapeHtml(tag)}</strong></td>
+              <td>${escapeHtml(r.expenseType || '')}</td>
+              <td>${escapeHtml(r.description || '')}</td>
+              <td class="text-end fw-bold">${formatMoney(r.amount)}</td>
+              <td>${receipt}</td>
+          </tr>`;
+      }).join('');
+  }
+</script>
+</body>
+</html>
