@@ -3091,31 +3091,12 @@ function getPettyCashData(userIdentifier) {
       });
     } catch (e) { diag.replenishmentsError = e.toString(); }
 
-    // For accounting, also return every project name from Project Database so
-    // they can Direct-Replenish a project that doesn't yet have a petty cash row.
-    // Backend will auto-create the row on first replenishment.
+    // The Direct Replenishment dropdown is sourced ONLY from the PettyCash
+    // Projects sheet (col A) — projects are mapped into that sheet manually,
+    // since it is the only place a running balance can be maintained. We no
+    // longer pull names from the master Project Database here (it was extra
+    // sheet-read latency on every load for a list the UI no longer uses).
     let allKnownProjectNames = [];
-    if (isAccountingRole_(emp.role)) {
-      try {
-        const projSheet = SS.getSheetByName(SHEETS.PROJECTS);
-        const seen = {};
-        pcReadRows_(projSheet, 1, 1).forEach(r => {
-          const nm = (r[0] || "").toString().trim();
-          if (nm && !seen[nm.toLowerCase()]) {
-            seen[nm.toLowerCase()] = true;
-            allKnownProjectNames.push(nm);
-          }
-        });
-        // Also include any existing petty cash projects not in Project Database
-        allProjects.forEach(p => {
-          if (!seen[p.name.toLowerCase()]) {
-            seen[p.name.toLowerCase()] = true;
-            allKnownProjectNames.push(p.name);
-          }
-        });
-        allKnownProjectNames.sort();
-      } catch (e) { diag.projectDbError = e.toString(); }
-    }
 
     return {
       projects: visibleProjects,

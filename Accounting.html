@@ -1876,20 +1876,16 @@
   function pcaPopulateDirectProjectDropdown() {
     const sel = document.getElementById('pca-dir-project');
     if (!sel) return;
-    // Merge known petty-cash projects (have row IDs) with master project DB names.
+    // Source the dropdown ONLY from the PettyCash Projects sheet (col A). The
+    // master Project Database is intentionally NOT merged in here — projects are
+    // mapped into the petty cash sheet's column A manually, since that is the
+    // only place a running balance can be maintained.
     // Defensive: rows from the server may have empty/null name fields — skip those
     // instead of throwing on p.name.toLowerCase().
-    const seen = {};
     const opts = ['<option value="">-- Select Project --</option>'];
     (pcaGlobalData.allProjects || []).forEach(p => {
       if (!p || !p.name) return;
-      seen[p.name.toLowerCase()] = true;
       opts.push(`<option value="${p.id}" data-name="${p.name.replace(/"/g,'&quot;')}">${p.name} <span>(Bal: ₱${Number(p.balance).toLocaleString()})</span></option>`);
-    });
-    (pcaGlobalData.allKnownProjectNames || []).forEach(name => {
-      if (!name) return;
-      if (seen[name.toLowerCase()]) return;
-      opts.push(`<option value="" data-name="${name.replace(/"/g,'&quot;')}">${name} (new)</option>`);
     });
     sel.innerHTML = opts.join('');
   }
