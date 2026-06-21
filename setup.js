@@ -22,10 +22,22 @@ function setup() {
 
   const sheetSchemas = {
     // --- Row-data sheets ---
-    "BOQ Database":         ["Project Title", "Phase", "Scope", "Sub Scope", "Sub-Sub Scope", "Item Description", "Unit", "Qty", "Reserved 1", "Reserved 2", "Labor Cost", "Material Cost"],
-    "Project Database":     ["Project Title", "Owner", "Address", "Date", "Bidder", "Source Link", "Date Uploaded"],
+    // BOQ Database is 16 columns wide. Columns M–P (Source / Drive Link / Uploader /
+    // Date Uploaded) were originally written only by Accounting's "Add Item" flow;
+    // they are now also populated by the BOQ Upload Portal ingestion path. Keeping
+    // the header in sync prevents column drift in downstream readers like
+    // getBOQDataForProject().
+    "BOQ Database":         ["Project Title", "Phase", "Scope", "Sub Scope", "Sub-Sub Scope", "Item Description", "Unit", "Qty", "Reserved 1", "Reserved 2", "Labor Cost", "Material Cost", "Source", "Drive Link", "Uploader", "Date Uploaded"],
+    // Project Database gained a "Total Contract Price" column when the BOQ Upload
+    // Portal was integrated — the value is captured at upload time and used
+    // downstream by Payments/Supplier-Payments tabs.
+    "Project Database":     ["Project Title", "Owner", "Address", "Date", "Bidder", "Source Link", "Date Uploaded", "Total Contract Price"],
     "Employee Database":    ["Name", "Email", "Position", "Assigned Projects", "Password", "Salt"],
     "Supplier Database":    ["Company Name", "Nature of Company", "Email", "Viber Number", "Contact Person"],
+
+    // Per-project payment-term breakdown captured at BOQ upload time
+    // (Milestone % / Payment % / Uploaded At / Uploader).
+    "Payment Terms Database": ["Project Title", "Milestone %", "Payment %", "Date Uploaded", "Uploader"],
 
     // --- Transactional / log sheets ---
     // First column is a Sheets checkbox column used by the approver queue UI
@@ -44,6 +56,15 @@ function setup() {
     "Payment Logs":         ["Purchase Order", "Payment Term", "%", "Supplier", "Invoiced Amount", "Payment Due Date", "Bank", "Check Number", "Payment Amount"],
     "Expense Logs":         ["Timestamp", "Expense ID", "Category", "Project Name", "Company Name", "Expense Type", "Description", "Amount", "Status", "Submitted By", "Submitter Email", "Notes", "Paid By", "Paid Date", "Payment Method", "Receipt Link"],
     "Expense Activity Logs":["Timestamp", "Expense ID", "Action", "Performed By", "Old Status", "New Status", "Notes"],
+
+    // --- Petty Cash module sheets (ported from Finance Portal) ---
+    //   PettyCash Projects     = per-project petty cash fund (allocated / spent / balance).
+    //   PettyCash Expenses     = individual petty cash spends; cap of ₱5,000 per submission enforced server-side.
+    //   PettyCash Replenishments = requests from employees (Pending → Approved/Denied)
+    //                              and direct logs from Accounting (Approved on create).
+    "PettyCash Projects":        ["Project / Office", "Total Allocated Fund", "Total Expenses", "Remaining Balance"],
+    "PettyCash Expenses":        ["Timestamp", "Doc Ref", "User", "Project", "Line Item", "Amount", "Balance After", "Receipt URL"],
+    "PettyCash Replenishments":  ["Timestamp", "Req ID", "Requestor Name", "Requestor Email", "Project ID", "Project Name", "Amount", "Status", "Receipt URL"],
 
     // --- Single source for ALL dropdown values ---
     "Dropdowns":            ["Category", "Value", "Meta", "Active", "Sort Order"]

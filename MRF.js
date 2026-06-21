@@ -14,8 +14,14 @@ const SHEETS = {
   BOQ_LOGS: "BOQ Logs",
   JUSTIFICATIONS: "Justification Logs",
   PAYMENT_LOGS: "Payment Logs",
+  PAYMENT_TERMS: "Payment Terms Database",
   EXPENSE_LOGS: "Expense Logs",
   EXPENSE_ACTIVITY: "Expense Activity Logs",
+  // Petty Cash module (ported from Finance Portal). Projects sheet rows are
+  // looked up by row index — i.e. row 2 = projectId 2 — so do not reorder it.
+  PETTY_CASH_PROJECTS:       "PettyCash Projects",
+  PETTY_CASH_EXPENSES:       "PettyCash Expenses",
+  PETTY_CASH_REPLENISHMENTS: "PettyCash Replenishments",
   // Single sheet that backs every dropdown in the app. Columns:
   //   Category | Value | Meta | Active | Sort Order
   // To add a new picklist, add rows with a new Category and read them back via
@@ -2904,4 +2910,805 @@ function submitAccountingExpense(payload, fileObj) {
   } catch (e) {
     return { success: false, error: e.toString() };
   }
+}
+
+// =============================================================================
+// --- PETTY CASH MODULE (ported from Finance Portal) ---
+// Self-contained block — does not modify any existing logic. Three sheets:
+//   PettyCash Projects        (row index used as projectId — do not reorder)
+//   PettyCash Expenses        (one row per line item)
+//   PettyCash Replenishments  (Pending → Approved/Denied; or Direct = Approved on create)
+//
+// Permission model:
+//   - Employees only see projects in their "Assigned Projects" column (Employee DB).
+//   - Roles containing 'accounting' or 'finance' see all projects and approve requests.
+// =============================================================================
+
+const PETTY_CASH_LIMIT = 5000;  // Combined per-submission cap, in pesos.
+
+function isAccountingRole_(role) {
+  const r = (role || "").toString().toLowerCase();
+  return r.indexOf("accounting") !== -1 || r.indexOf("finance") !== -1;
+}
+
+function lookupEmployee_(identifier) {
+  if (!identifier) return null;
+  const sheet = SS.getSheetByName(SHEETS.EMPLOYEES);
+  if (!sheet) return null;
+  const data = sheet.getDataRange().getValues();
+  const input = identifier.toString().trim().toLowerCase();
+  for (let i = 1; i < data.length; i++) {
+    const nm = (data[i][0] || "").toString().trim().toLowerCase();
+    const em = (data[i][1] || "").toString().trim().toLowerCase();
+    if (nm === input || em === input) {
+      return {
+        name: data[i][0] || "",
+        email: data[i][1] || "",
+        role: (data[i][2] || "").toString().toLowerCase().trim(),
+        assignedProjects: (data[i][3] || "").toString().trim()
+      };
+    }
+  }
+  return null;
+}
+
+// Returns lowercase set of project names the employee is allowed to see. Empty
+// set means "no restriction" — used for accounting/finance roles, who see all.
+function getAllowedPettyCashProjects_(emp) {
+  if (!emp) return null;
+  if (isAccountingRole_(emp.role)) return null;
+  if (!emp.assignedProjects) return new Set();
+  return new Set(
+    emp.assignedProjects
+      .split(/[,;\n]/)
+      .map(s => s.trim().toLowerCase())
+      .filter(s => s)
+  );
+}
+
+// Safety cap on petty cash sheet reads. A stray value or leftover formatting far
+// down a sheet inflates getLastRow() to hundreds of thousands of rows; reading
+// that whole range can stall the call for 30s+ (the bug that left Petty Cash
+// stuck on the loading screen). Real petty cash sheets are nowhere near this big.
+const PC_MAX_ROWS = 20000;
+
+// Reads rows 2..N of a sheet, bounded by PC_MAX_ROWS. Returns [] for a missing
+// or header-only sheet. Centralises the runaway-getLastRow() guard.
+function pcReadRows_(sheet, startCol, numCols) {
+  if (!sheet) return [];
+  const last = sheet.getLastRow();
+  if (last < 2) return [];
+  const n = Math.min(last - 1, PC_MAX_ROWS);
+  return sheet.getRange(2, startCol, n, numCols).getValues();
+}
+
+// Reads PettyCash Projects sheet and computes balance from PettyCash Expenses
+// live (formulas in the sheet are optional — backend is authoritative).
+function loadPettyCashProjects_() {
+  const pSheet = SS.getSheetByName(SHEETS.PETTY_CASH_PROJECTS);
+  if (!pSheet) return [];
+
+  // Map of projectName(lowercased) → total spent (bounded read).
+  const eSheet = SS.getSheetByName(SHEETS.PETTY_CASH_EXPENSES);
+  const spentMap = {};
+  pcReadRows_(eSheet, 4, 3).forEach(r => { // cols D..F = Project, Item, Amount
+    const key = (r[0] || "").toString().trim().toLowerCase();
+    const amt = Number(r[2]) || 0;
+    if (key) spentMap[key] = (spentMap[key] || 0) + amt;
+  });
+
+  return pcReadRows_(pSheet, 1, 2).map((r, idx) => {
+    const name = (r[0] || "").toString().trim();
+    const allocated = Number(r[1]) || 0;
+    const spent = spentMap[name.toLowerCase()] || 0;
+    return {
+      id: idx + 2,             // row index in the sheet
+      name: name,
+      allocated: allocated,
+      spent: spent,
+      balance: allocated - spent
+    };
+  }).filter(p => p.name);
+}
+
+// Fast diagnostic — returns immediately without loading/serializing the data.
+// Confirms the google.script.run bridge is alive, whether the active user is in
+// the Employee Database, and the size of every sheet Petty Cash touches. If the
+// portal ever stalls again, this pinpoints which sheet/condition is at fault.
+function pettyCashPing(userIdentifier) {
+  const out = { ok: true, time: new Date().toISOString(), maxRows: PC_MAX_ROWS };
+  try {
+    const emp = lookupEmployee_(userIdentifier);
+    out.identifier = (userIdentifier || "").toString();
+    out.userFound = !!emp;
+    out.role = emp ? emp.role : "";
+  } catch (e) { out.lookupError = e.toString(); }
+
+  [["projects", SHEETS.PETTY_CASH_PROJECTS],
+   ["expenses", SHEETS.PETTY_CASH_EXPENSES],
+   ["replenishments", SHEETS.PETTY_CASH_REPLENISHMENTS],
+   ["projectDb", SHEETS.PROJECTS],
+   ["employees", SHEETS.EMPLOYEES]].forEach(pair => {
+    try {
+      const sh = SS.getSheetByName(pair[1]);
+      out[pair[0] + "Exists"] = !!sh;
+      out[pair[0] + "LastRow"] = sh ? sh.getLastRow() : 0;
+    } catch (e) { out[pair[0] + "Error"] = e.toString(); }
+  });
+  return out;
+}
+
+// Single entry point the front-end calls on portal load. Returns everything
+// the petty cash UI needs in one trip. Role-aware filtering happens here so
+// the front-end can render without further lookups.
+function getPettyCashData(userIdentifier) {
+  const diag = {};
+  try {
+    const emp = lookupEmployee_(userIdentifier);
+    if (!emp) {
+      return {
+        projects: [], expenses: [], replenishments: [], allProjects: [], allKnownProjectNames: [], role: "",
+        error: 'Your account ("' + (userIdentifier || "") + '") was not found in the Employee Database. '
+             + 'Add it (Name or Email must match) and try again.'
+      };
+    }
+
+    // Each section is isolated: a single slow/broken sheet degrades to empty data
+    // for that section instead of hanging or failing the whole request. Every
+    // read is bounded by pcReadRows_ so a runaway getLastRow() can't stall us.
+    let allProjects = [];
+    try { allProjects = loadPettyCashProjects_(); }
+    catch (e) { diag.projectsError = e.toString(); }
+
+    const allowed = getAllowedPettyCashProjects_(emp);
+    const visibleProjects = (allowed === null)
+      ? allProjects
+      : allProjects.filter(p => allowed.has(p.name.toLowerCase()));
+
+    // Build each row with EVERY cell explicitly converted to a primitive
+    // (dates → ISO string, amounts → number, text → string) — the same defensive
+    // shaping getAccountingQueue() uses on the tabs that already work, so no raw
+    // Date/blank/object cell can sneak into the response.
+    const cell = function (v) {
+      if (v === null || v === undefined) return "";
+      return (v instanceof Date) ? v.toISOString() : v.toString();
+    };
+    const num = function (v) { return Number(v) || 0; };
+
+    let expenses = [];
+    try {
+      const eSheet = SS.getSheetByName(SHEETS.PETTY_CASH_EXPENSES);
+      expenses = pcReadRows_(eSheet, 1, 8).reverse().map(function (r) {
+        return [cell(r[0]), cell(r[1]), cell(r[2]), cell(r[3]), cell(r[4]), num(r[5]), num(r[6]), cell(r[7])];
+      });
+    } catch (e) { diag.expensesError = e.toString(); }
+
+    let replenishments = [];
+    try {
+      const rSheet = SS.getSheetByName(SHEETS.PETTY_CASH_REPLENISHMENTS);
+      replenishments = pcReadRows_(rSheet, 1, 9).reverse().map(function (r) {
+        return [cell(r[0]), cell(r[1]), cell(r[2]), cell(r[3]), cell(r[4]), cell(r[5]), num(r[6]), cell(r[7]), cell(r[8])];
+      });
+    } catch (e) { diag.replenishmentsError = e.toString(); }
+
+    // For accounting, also return every project name from Project Database so
+    // they can Direct-Replenish a project that doesn't yet have a petty cash row.
+    // Backend will auto-create the row on first replenishment.
+    let allKnownProjectNames = [];
+    if (isAccountingRole_(emp.role)) {
+      try {
+        const projSheet = SS.getSheetByName(SHEETS.PROJECTS);
+        const seen = {};
+        pcReadRows_(projSheet, 1, 1).forEach(r => {
+          const nm = (r[0] || "").toString().trim();
+          if (nm && !seen[nm.toLowerCase()]) {
+            seen[nm.toLowerCase()] = true;
+            allKnownProjectNames.push(nm);
+          }
+        });
+        // Also include any existing petty cash projects not in Project Database
+        allProjects.forEach(p => {
+          if (!seen[p.name.toLowerCase()]) {
+            seen[p.name.toLowerCase()] = true;
+            allKnownProjectNames.push(p.name);
+          }
+        });
+        allKnownProjectNames.sort();
+      } catch (e) { diag.projectDbError = e.toString(); }
+    }
+
+    return {
+      projects: visibleProjects,
+      allProjects: isAccountingRole_(emp.role) ? allProjects : visibleProjects,
+      allKnownProjectNames: allKnownProjectNames,
+      expenses: expenses,
+      replenishments: replenishments,
+      role: emp.role,
+      userName: emp.name,
+      userEmail: emp.email,
+      isAccounting: isAccountingRole_(emp.role),
+      _diag: diag
+    };
+  } catch (e) {
+    return { projects: [], expenses: [], replenishments: [], allProjects: [], allKnownProjectNames: [], role: "", error: e.toString(), _diag: diag };
+  }
+}
+
+// STRING wrapper around getPettyCashData — this is what the front-end actually
+// calls. Returning a JSON string instead of a live object sidesteps every
+// google.script.run object-serialization quirk (raw Date cells, mixed types,
+// NaN/Infinity in number columns) that can make a call silently hang with
+// NEITHER the success nor the failure handler firing — the exact symptom Petty
+// Cash was hitting while every other tab worked. JSON.stringify flattens Dates
+// to strings and NaN to null, and a plain string always serializes cleanly.
+// The front-end JSON.parse()s the result.
+function getPettyCashDataString(userIdentifier) {
+  try {
+    return JSON.stringify(getPettyCashData(userIdentifier));
+  } catch (e) {
+    return JSON.stringify({
+      projects: [], expenses: [], replenishments: [], allProjects: [], allKnownProjectNames: [],
+      role: "", error: "Serialization failed: " + e.toString()
+    });
+  }
+}
+
+// Run this straight from the Apps Script editor (Run ▸ TEST_pettyCash) to prove
+// whether the SERVER side works independently of the web-app bridge. It logs how
+// long the call takes and how much data comes back. If this completes in the
+// editor but the portal still hangs, the problem is the deployment/bridge, not
+// the data; redeploy a new version. If it errors/stalls here, the log says why.
+function TEST_pettyCash() {
+  const who = Session.getActiveUser().getEmail();
+  const t0 = new Date().getTime();
+  const json = getPettyCashDataString(who);
+  const ms = new Date().getTime() - t0;
+  const obj = JSON.parse(json);
+  Logger.log("user=%s  took=%sms  bytes=%s", who, ms, json.length);
+  Logger.log("projects=%s expenses=%s replenishments=%s error=%s diag=%s",
+    (obj.projects || []).length, (obj.expenses || []).length,
+    (obj.replenishments || []).length, obj.error || "(none)", JSON.stringify(obj._diag || {}));
+  return json;
+}
+
+// Notification helpers — best-effort. Silently no-op if Gmail is unavailable
+// (e.g. user hasn't authorized GmailApp scope yet).
+function notifyAccountingPC_(type, user, amount) {
+  try {
+    const url = ScriptApp.getService().getUrl();
+    const empSheet = SS.getSheetByName(SHEETS.EMPLOYEES);
+    if (!empSheet) return;
+    const data = empSheet.getDataRange().getValues();
+    const emails = [];
+    for (let i = 1; i < data.length; i++) {
+      const role = (data[i][2] || "").toString().toLowerCase();
+      if (role.indexOf("accounting") !== -1 || role.indexOf("finance") !== -1) {
+        if (data[i][1]) emails.push(data[i][1].toString());
+      }
+    }
+    if (!emails.length) return;
+    const subject = `New ${type} Request - ${user}`;
+    const body = `A new ${type} request for ₱${Number(amount).toLocaleString()} has been submitted by ${user}.\n\nReview it in the portal: ${url}`;
+    GmailApp.sendEmail(emails.join(','), subject, body);
+  } catch (e) { /* ignore */ }
+}
+
+function notifyUserPC_(email, type, status, amount, projectName, attachedFile) {
+  try {
+    if (!email) return;
+    const url = ScriptApp.getService().getUrl();
+    const reqAmount = Number(amount).toLocaleString('en-US', {minimumFractionDigits: 2});
+    const subject = `Update on your ${type}: ${status}`;
+    let body = `Hello,\n\nYour ${type} request has been ${status}.\n\nAmount: PHP ${reqAmount}\nProject: ${projectName}\n\nPortal: ${url}\n`;
+    let options = {};
+    if (attachedFile) {
+      options.attachments = [attachedFile.getAs(MimeType.PDF)];
+      body += `\nThe approval document is attached.`;
+    }
+    GmailApp.sendEmail(email, subject, body, options);
+  } catch (e) { /* ignore */ }
+}
+
+// Employee submits one or more petty cash line items against a project, with
+// a receipt attached. Combined total of all line items must be ≤ PETTY_CASH_LIMIT
+// and ≤ project remaining balance.
+function submitPettyCashExpense(payload) {
+  const lock = LockService.getDocumentLock();
+  try {
+    if (!lock.tryLock(10000)) return { success: false, error: "Server busy — retry in a moment." };
+
+    if (!payload || !payload.projectId || !payload.items || !payload.items.length) {
+      return { success: false, error: "Missing project or line items." };
+    }
+
+    let totalAmount = 0;
+    payload.items.forEach(i => totalAmount += Number(i.amount) || 0);
+    if (totalAmount <= 0) return { success: false, error: "Total expense amount must be greater than zero." };
+    if (totalAmount > PETTY_CASH_LIMIT) {
+      return { success: false, error: `Combined transactions over ₱${PETTY_CASH_LIMIT.toLocaleString()} are not permitted in Petty Cash.` };
+    }
+
+    const pSheet = SS.getSheetByName(SHEETS.PETTY_CASH_PROJECTS);
+    if (!pSheet) return { success: false, error: "PettyCash Projects sheet missing — run setup()." };
+
+    // Resolve project via row index — must exist.
+    const projectId = Number(payload.projectId);
+    if (!projectId || projectId < 2 || projectId > pSheet.getLastRow()) {
+      return { success: false, error: "Invalid project." };
+    }
+    const projectRow = pSheet.getRange(projectId, 1, 1, 2).getValues()[0];
+    const projectName = (projectRow[0] || "").toString().trim();
+    if (!projectName) return { success: false, error: "Project not found." };
+
+    // Compute current balance from authoritative source (sheet allocated − ledger total)
+    const allProjects = loadPettyCashProjects_();
+    const proj = allProjects.find(p => p.id === projectId);
+    if (!proj) return { success: false, error: "Project not found." };
+    let currentBalance = proj.balance;
+
+    if (totalAmount > currentBalance) {
+      return { success: false, error: "Insufficient petty cash balance for this project." };
+    }
+
+    const timestamp = new Date();
+    const dateStr = Utilities.formatDate(timestamp, Session.getScriptTimeZone(), "yyyyMMdd");
+    const docRef = "PC-" + dateStr + "-" + Math.floor(1000 + Math.random() * 9000);
+
+    // Upload receipt — receipt is required (matches Finance Portal behavior).
+    let receiptUrl = "No Receipt";
+    if (payload.fileData) {
+      try {
+        const folder = getOrCreateDynamicFolder(projectName, "Petty Cash", "Receipts");
+        const ext = (payload.fileName || "").split('.').pop() || "pdf";
+        let baseName = docRef;
+        let finalName = baseName + "." + ext;
+        let counter = 2;
+        while (folder.getFilesByName(finalName).hasNext()) {
+          finalName = baseName + "_" + counter + "." + ext;
+          counter++;
+        }
+        const dataPart = payload.fileData.indexOf(',') !== -1
+          ? payload.fileData.split(',')[1]
+          : payload.fileData;
+        const blob = Utilities.newBlob(Utilities.base64Decode(dataPart), payload.mimeType, finalName);
+        receiptUrl = safeDriveAction(() => folder.createFile(blob)).getUrl();
+      } catch (uploadErr) {
+        return { success: false, error: "Receipt upload failed: " + uploadErr.toString() };
+      }
+    } else {
+      return { success: false, error: "Receipt attachment is required for petty cash logging." };
+    }
+
+    const eSheet = SS.getSheetByName(SHEETS.PETTY_CASH_EXPENSES);
+    const rowsToInsert = [];
+    payload.items.forEach(item => {
+      currentBalance -= Number(item.amount);
+      rowsToInsert.push([
+        timestamp, docRef, payload.user, projectName,
+        item.item, Number(item.amount), currentBalance, receiptUrl
+      ]);
+    });
+
+    if (rowsToInsert.length) {
+      eSheet.getRange(eSheet.getLastRow() + 1, 1, rowsToInsert.length, rowsToInsert[0].length)
+            .setValues(rowsToInsert);
+    }
+
+    return { success: true, docRef: docRef };
+  } catch (e) {
+    return { success: false, error: e.toString() };
+  } finally {
+    try { lock.releaseLock(); } catch (e) {}
+  }
+}
+
+// Employee files a replenishment request — accounting must approve.
+function requestPettyCashReplenishment(payload) {
+  try {
+    if (!payload || !payload.projectId || !payload.projectName) {
+      return { success: false, error: "Missing project information." };
+    }
+
+    const amountStr = (payload.amount || "").toString();
+    if (/[^0-9.,]/.test(amountStr)) {
+      return { success: false, error: "Invalid characters in amount. Only digits, commas, and a decimal point are allowed." };
+    }
+    const cleanAmount = Number(amountStr.replace(/,/g, ''));
+    if (isNaN(cleanAmount) || cleanAmount <= 0) {
+      return { success: false, error: "Amount must be greater than zero." };
+    }
+
+    const rSheet = SS.getSheetByName(SHEETS.PETTY_CASH_REPLENISHMENTS);
+    const reqId = "REP-" + new Date().getTime().toString().slice(-6);
+    rSheet.appendRow([
+      new Date(), reqId, payload.user, payload.email,
+      payload.projectId, payload.projectName, cleanAmount, 'Pending', ''
+    ]);
+
+    notifyAccountingPC_('Petty Cash Replenishment', payload.user, cleanAmount);
+    return { success: true, reqId: reqId };
+  } catch (e) {
+    return { success: false, error: e.toString() };
+  }
+}
+
+// Accounting bypass — log a direct replenishment that's auto-approved.
+// Auto-creates a PettyCash Projects row if the chosen project doesn't have one yet,
+// so accounting can replenish any project from the master Project Database without
+// pre-seeding the petty cash sheet.
+function directPettyCashReplenish(payload) {
+  const lock = LockService.getDocumentLock();
+  try {
+    if (!lock.tryLock(10000)) return { success: false, error: "Server busy — retry in a moment." };
+
+    if (!payload || !payload.projectName) {
+      return { success: false, error: "Missing project name." };
+    }
+    const amountStr = (payload.amount || "").toString();
+    if (/[^0-9.,]/.test(amountStr)) {
+      return { success: false, error: "Invalid characters in amount." };
+    }
+    const cleanAmount = Number(amountStr.replace(/,/g, ''));
+    if (isNaN(cleanAmount) || cleanAmount <= 0) {
+      return { success: false, error: "Amount must be greater than zero." };
+    }
+
+    const pSheet = SS.getSheetByName(SHEETS.PETTY_CASH_PROJECTS);
+    if (!pSheet) return { success: false, error: "PettyCash Projects sheet missing — run setup()." };
+
+    // Resolve project row — by id if supplied, else by name (auto-create if absent).
+    const wantedName = payload.projectName.toString().trim();
+    let projectId = Number(payload.projectId);
+    if (!projectId || projectId < 2 || projectId > pSheet.getLastRow()) {
+      const lookupRange = pSheet.getLastRow() >= 2
+        ? pSheet.getRange(2, 1, pSheet.getLastRow() - 1, 1).getValues()
+        : [];
+      const wantedKey = wantedName.toLowerCase();
+      const foundIdx = lookupRange.findIndex(r => (r[0] || "").toString().trim().toLowerCase() === wantedKey);
+      if (foundIdx !== -1) {
+        projectId = foundIdx + 2;
+      } else {
+        // Auto-create the project row with zero starting allocation; the
+        // replenishment we're about to log will bump it up below.
+        pSheet.appendRow([wantedName, 0, "", ""]);
+        projectId = pSheet.getLastRow();
+      }
+    }
+
+    const currentAlloc = Number(pSheet.getRange(projectId, 2).getValue()) || 0;
+    pSheet.getRange(projectId, 2).setValue(currentAlloc + cleanAmount);
+
+    const reqId = "DIR-" + new Date().getTime().toString().slice(-6);
+    const reqAmount = cleanAmount.toLocaleString('en-US', {minimumFractionDigits: 2});
+
+    // Best-effort PDF receipt — failure here doesn't abort the replenishment.
+    let attachedFile = null;
+    let fileUrl = "-";
+    try {
+      const folder = getOrCreateDynamicFolder(payload.projectName, "Petty Cash", "Replenishments");
+      let baseName = reqId;
+      let finalName = baseName + ".pdf";
+      let counter = 2;
+      while (folder.getFilesByName(finalName).hasNext()) {
+        finalName = baseName + "_" + counter + ".pdf";
+        counter++;
+      }
+      const html = `<div style="font-family: Arial, sans-serif; padding: 40px;">
+        <h2>Direct Replenishment Confirmation</h2>
+        <p><strong>Document ID:</strong> ${reqId}</p>
+        <p><strong>Status:</strong> DIRECT LOG (APPROVED)</p>
+        <hr>
+        <p><strong>Amount:</strong> PHP ${reqAmount}</p>
+        <p><strong>Project:</strong> ${payload.projectName}</p>
+        <p><strong>Processed By:</strong> ${payload.user}</p>
+      </div>`;
+      const blob = Utilities.newBlob(html, MimeType.HTML).getAs(MimeType.PDF).setName(finalName);
+      attachedFile = safeDriveAction(() => folder.createFile(blob));
+      fileUrl = attachedFile.getUrl();
+    } catch (pdfErr) {
+      console.error("Direct replenishment PDF generation failed: " + pdfErr.toString());
+    }
+
+    const rSheet = SS.getSheetByName(SHEETS.PETTY_CASH_REPLENISHMENTS);
+    rSheet.appendRow([
+      new Date(), reqId, payload.user, payload.email,
+      projectId, payload.projectName, cleanAmount, 'Approved', fileUrl
+    ]);
+
+    notifyUserPC_(payload.email, 'Direct Fund Replenishment', 'Logged & Approved', cleanAmount, payload.projectName, attachedFile);
+    return { success: true, reqId: reqId };
+  } catch (e) {
+    return { success: false, error: e.toString() };
+  } finally {
+    try { lock.releaseLock(); } catch (e) {}
+  }
+}
+
+// Accounting batch action — approves or denies a list of pending replenishment
+// request IDs. Approved requests bump the project allocation and email the
+// requestor a PDF; denied ones are flagged and the requestor is emailed.
+function processBatchPettyCashReplenish(reqIds, action) {
+  const lock = LockService.getDocumentLock();
+  try {
+    if (!lock.tryLock(20000)) return { success: false, error: "Server busy — retry in a moment." };
+    if (action !== 'Approved' && action !== 'Denied') {
+      return { success: false, error: "Invalid action." };
+    }
+
+    const rSheet = SS.getSheetByName(SHEETS.PETTY_CASH_REPLENISHMENTS);
+    const pSheet = SS.getSheetByName(SHEETS.PETTY_CASH_PROJECTS);
+    if (!rSheet || !pSheet) return { success: false, error: "Petty Cash sheets missing — run setup()." };
+
+    const data = rSheet.getDataRange().getValues();
+
+    (reqIds || []).forEach(reqId => {
+      const rowIndex = data.findIndex(r => r[1] === reqId);
+      if (rowIndex === -1 || data[rowIndex][7] !== 'Pending') return;
+
+      rSheet.getRange(rowIndex + 1, 8).setValue(action);
+
+      const requestorName  = data[rowIndex][2];
+      const requestorEmail = data[rowIndex][3];
+      const projectId      = Number(data[rowIndex][4]);
+      const projectName    = data[rowIndex][5];
+      const rawAmount      = Number(data[rowIndex][6]);
+      const reqAmount      = rawAmount.toLocaleString('en-US', {minimumFractionDigits: 2});
+
+      let attachedFile = null;
+      let fileUrl = "-";
+
+      if (action === 'Approved') {
+        if (projectId && projectId >= 2 && projectId <= pSheet.getLastRow()) {
+          const currentAlloc = Number(pSheet.getRange(projectId, 2).getValue()) || 0;
+          pSheet.getRange(projectId, 2).setValue(currentAlloc + rawAmount);
+        }
+
+        try {
+          const folder = getOrCreateDynamicFolder(projectName, "Petty Cash", "Replenishments");
+          let baseName = reqId;
+          let finalName = baseName + ".pdf";
+          let counter = 2;
+          while (folder.getFilesByName(finalName).hasNext()) {
+            finalName = baseName + "_" + counter + ".pdf";
+            counter++;
+          }
+          const html = `<div style="font-family: Arial, sans-serif; padding: 40px;">
+            <h2>Approved Replenishment</h2>
+            <p><strong>Document ID:</strong> ${reqId}</p>
+            <p><strong>Status:</strong> APPROVED</p>
+            <hr>
+            <p><strong>Amount:</strong> PHP ${reqAmount}</p>
+            <p><strong>Project:</strong> ${projectName}</p>
+            <p><strong>Requestor:</strong> ${requestorName}</p>
+          </div>`;
+          const blob = Utilities.newBlob(html, MimeType.HTML).getAs(MimeType.PDF).setName(finalName);
+          attachedFile = safeDriveAction(() => folder.createFile(blob));
+          fileUrl = attachedFile.getUrl();
+        } catch (pdfErr) {
+          console.error("Replenishment PDF generation failed: " + pdfErr.toString());
+        }
+      }
+
+      rSheet.getRange(rowIndex + 1, 9).setValue(fileUrl);
+      notifyUserPC_(requestorEmail, 'Petty Cash Replenishment', action, rawAmount, projectName, attachedFile);
+    });
+
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.toString() };
+  } finally {
+    try { lock.releaseLock(); } catch (e) {}
+  }
+}
+
+// =====================================================================
+// --- BOQ UPLOAD PORTAL (Accounting → BOQ Upload tab) ---
+// Front-end picks an Excel/CSV BOQ workbook, the TCP, and the payment-term
+// breakdown. processBoqPortalUpload converts the file to a temporary Google
+// Sheet, parses every non-SUMMARY tab using the legacy "phase/scope/sub-scope"
+// detection logic, and writes:
+//   - one Project Database row (if not already registered)
+//   - one Payment Terms Database row per milestone
+//   - one BOQ Database row per detected line item
+// The database is the ACTIVE spreadsheet (SS) — no external DB URL.
+// =====================================================================
+
+function processBoqPortalUpload(obj) {
+  try {
+    const blob = Utilities.newBlob(Utilities.base64Decode(obj.data), obj.mimeType, obj.fileName);
+    const resource = {
+      name: "Temp_BOQ_Upload_" + obj.fileName,
+      mimeType: MimeType.GOOGLE_SHEETS
+    };
+    const tempFile = Drive.Files.create(resource, blob);
+    const tempSheetId = tempFile.id;
+
+    const tempSs = SpreadsheetApp.openById(tempSheetId);
+
+    // Resolve uploader once and pass through so the worker doesn't need another
+    // Session lookup (Session.getActiveUser().getEmail() returns "" for anonymous
+    // web app users — fall back to the display name passed from the front end).
+    const uploader = (Session.getActiveUser().getEmail() || obj.uploader || "Web Portal User").toString();
+
+    const resultMessage = ingestBoqWorkbookIntoActiveDb_(tempSs, obj.tcp, obj.terms, uploader);
+
+    // Cleanup: trash the temp file so the user's Drive isn't polluted.
+    try { DriveApp.getFileById(tempSheetId).setTrashed(true); } catch (e) {}
+
+    return resultMessage;
+  } catch (e) {
+    throw new Error("File processing failed: " + e.message);
+  }
+}
+
+// Scans sheets in the uploaded workbook for the project metadata block
+// (B3..B7). SUMMARY is skipped; the first sheet with a usable B3 wins.
+function getBoqProjectMetadata_(ss) {
+  const sheets = ss.getSheets();
+  const meta = { title: "", owner: "", address: "", date: "", bidder: "" };
+  for (let i = 0; i < sheets.length; i++) {
+    const sheet = sheets[i];
+    if (sheet.getName().toUpperCase() === "SUMMARY") continue;
+    const title = sheet.getRange("B3").getValue();
+    if (title && title !== "" && title !== "#REF!") {
+      meta.title   = title;
+      meta.owner   = sheet.getRange("B4").getValue();
+      meta.address = sheet.getRange("B5").getValue();
+      meta.date    = sheet.getRange("B6").getValue();
+      meta.bidder  = sheet.getRange("B7").getValue();
+      break;
+    }
+  }
+  return meta;
+}
+
+function ingestBoqWorkbookIntoActiveDb_(ss, tcp, paymentTerms, uploader) {
+  const dbSheet     = SS.getSheetByName(SHEETS.BOQ);
+  const projDbSheet = SS.getSheetByName(SHEETS.PROJECTS);
+  const termsDbSheet = SS.getSheetByName(SHEETS.PAYMENT_TERMS);
+
+  if (!dbSheet || !projDbSheet || !termsDbSheet) {
+    return "❌ Required database sheets are missing. Run setup() first.";
+  }
+
+  const meta = getBoqProjectMetadata_(ss);
+  if (!meta.title) {
+    return "❌ Error: Could not find Project Title in Row 3 (Col B) of any non-SUMMARY tab.";
+  }
+
+  // --- PART A: PROJECT REGISTRATION (skip if duplicate) ---
+  let isDuplicate = false;
+  const lastProjRow = projDbSheet.getLastRow();
+  if (lastProjRow > 1) {
+    const existingProjData = projDbSheet.getRange(2, 1, lastProjRow - 1, 5).getValues();
+    for (let j = 0; j < existingProjData.length; j++) {
+      if (existingProjData[j][0] == meta.title &&
+          existingProjData[j][1] == meta.owner &&
+          existingProjData[j][2] == meta.address &&
+          existingProjData[j][4] == meta.bidder) {
+        isDuplicate = true;
+        break;
+      }
+    }
+  }
+
+  const uploadDate = new Date();
+  let regStatus = "";
+  if (!isDuplicate) {
+    projDbSheet.appendRow([
+      meta.title,
+      meta.owner,
+      meta.address,
+      meta.date,
+      meta.bidder,
+      "Uploaded via Web Portal",
+      uploadDate,
+      tcp
+    ]);
+    regStatus = "✅ Project registered. ";
+  } else {
+    regStatus = "ℹ️ Project already existed. ";
+  }
+
+  // --- Save Payment Terms ---
+  if (paymentTerms && paymentTerms.length > 0) {
+    const termsDataToInsert = paymentTerms.map(t => [
+      meta.title,
+      t.milestone + "%",
+      t.payment + "%",
+      uploadDate,
+      uploader
+    ]);
+    termsDbSheet.getRange(termsDbSheet.getLastRow() + 1, 1, termsDataToInsert.length, 5)
+                .setValues(termsDataToInsert);
+  }
+
+  // --- PART B: BOQ ROW INGESTION (16-column layout matching addBOQItem) ---
+  //
+  // Column map (must mirror setup.js "BOQ Database" schema and getBOQDataForProject):
+  //   A Project Title | B Phase | C Scope | D Sub Scope | E Sub-Sub Scope
+  //   F Item | G Unit | H Qty | I Reserved 1 | J Reserved 2
+  //   K Labor Cost | L Material Cost | M Source | N Drive Link | O Uploader | P Date
+  //
+  // Workbook tabs start with metadata in rows 1-12 and BOQ line items from
+  // row 13 onward across columns A-J. The classification rules below detect
+  // phase / scope / sub-scope header rows by looking at numbering and
+  // empty cost cells — identical to the legacy BOQUploadCode logic.
+  const rowsToInsert = [];
+
+  ss.getSheets().forEach(sheet => {
+    const sheetName = sheet.getName();
+    if (sheetName.toUpperCase() === "SUMMARY") return;
+
+    const lastRow = sheet.getLastRow();
+    if (lastRow < 13) return;
+
+    const projectTitle = sheet.getRange("B3").getValue();
+    if (!projectTitle || projectTitle === "#REF!") return;
+
+    const data = sheet.getRange(13, 1, lastRow - 12, 10).getValues();
+
+    let currentPhase = "";
+    let currentScope = "";
+    let currentSubScope = "";
+    const sourceLink = "Uploaded via Web Portal";
+
+    for (let i = 0; i < data.length; i++) {
+      const colA = String(data[i][0]).trim();
+      const colB = String(data[i][1]).trim();
+      const colC = String(data[i][2]).trim();
+      const colD_Unit = String(data[i][3]).trim();
+      const colE_Qty  = String(data[i][4]).trim();
+      const hasData = (colD_Unit !== "" || colE_Qty !== "");
+
+      const isPhaseNumeric  = (colA !== "" && /^\d+$/.test(colA));
+      const isPhaseTextOnly = (colA === "" && colB !== "" && !hasData && !/^\d+\.\d+/.test(colB) && !colB.includes("#REF!"));
+
+      if (isPhaseNumeric || isPhaseTextOnly) {
+        currentPhase = colB;
+        currentScope = "";
+        currentSubScope = "";
+        continue;
+      }
+
+      const isRef = colB.includes("#REF!");
+      const isSingleDecimal = /^\d+\.\d+$/.test(colB);
+
+      if (!hasData) {
+        if (isRef || isSingleDecimal) {
+          currentScope = colC;
+          currentSubScope = "";
+        } else if (/^\d+\.\d+\.\d+$/.test(colB)) {
+          currentSubScope = colC;
+        }
+      }
+
+      if (hasData && colC !== "") {
+        rowsToInsert.push([
+          projectTitle,        // A — Project Title
+          currentPhase,        // B — Phase
+          currentScope,        // C — Scope
+          currentSubScope,     // D — Sub Scope
+          "",                  // E — Sub-Sub Scope (not parsed from workbook layout)
+          colC,                // F — Item Description
+          data[i][3],          // G — Unit
+          data[i][4],          // H — Qty
+          data[i][5],          // I — Reserved 1
+          data[i][6],          // J — Reserved 2
+          data[i][7],          // K — Labor Cost
+          data[i][8],          // L — Material Cost
+          sourceLink,          // M — Source
+          data[i][9] || "",    // N — Drive Link (col J in source workbook, if any)
+          uploader,            // O — Uploader
+          uploadDate           // P — Date Uploaded
+        ]);
+      }
+    }
+  });
+
+  if (rowsToInsert.length > 0) {
+    dbSheet.getRange(dbSheet.getLastRow() + 1, 1, rowsToInsert.length, 16).setValues(rowsToInsert);
+    return regStatus + "\n🚀 Ingested " + rowsToInsert.length + " BOQ rows.";
+  }
+  return regStatus + "\n⚠️ No BOQ rows found.";
 }

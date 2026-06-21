@@ -7,43 +7,96 @@
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.0/js/bootstrap.bundle.min.js"></script>
   <style>
-    :root { 
-      --primary: #212529; 
-      --accent: #212529; 
-      --bg: #f8f9fa; 
+    :root {
+      --ink: #0d0d0d;
+      --ink-soft: #2a2a2a;
+      --line: #e5e5e5;
+      --line-strong: #cfcfcf;
+      --canvas: #f4f4f5;
+      --panel: #ffffff;
+      --muted: #6b6b6b;
+      --sidebar-w: 260px;
+      --primary: #0d0d0d;   /* legacy alias used throughout the JS-rendered chunks */
+      --bg: #f4f4f5;
     }
-    body { font-family: 'Plus Jakarta Sans', Tahoma, sans-serif; background: var(--bg); color: #1a1a1a; margin: 0;}
-    
-    .batch-card { border: 2px solid #212529; border-radius: 4px; background: #fff; margin-bottom: 20px;}
-    .batch-header { background: #212529; color: #ffffff; padding: 12px 20px; display: flex; justify-content: space-between; align-items: center; border-radius: 2px 2px 0 0; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body { font-family: 'Plus Jakarta Sans', Tahoma, sans-serif; background: var(--canvas); color: var(--ink); }
+
+    .batch-card { border: 1px solid var(--line-strong); border-radius: 10px; background: #fff; margin-bottom: 18px; overflow: hidden; }
+    .batch-header { background: var(--ink); color: #fff; padding: 12px 18px; display: flex; justify-content: space-between; align-items: center; }
     .batch-body { padding: 20px; }
-    #loader { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(255,255,255,0.9); z-index: 10000; justify-content: center; align-items: center; flex-direction: column; }
-    .spinner-border { color: #212529 !important; }
-    
-    /* Mimicking MRF Index Header Styles */
-    .navbar { background: #ffffff; padding: 15px 40px; border-bottom: 5px solid var(--primary); box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1); }
+    #loader { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(255,255,255,0.92); z-index: 10000; justify-content: center; align-items: center; flex-direction: column; }
+    .spinner-border { color: var(--ink) !important; }
+
+    /* Header (kept structurally) */
+    .navbar { background: #ffffff; padding: 14px 40px; border-bottom: 4px solid var(--ink); box-shadow: 0 1px 3px 0 rgba(0,0,0,0.06); }
     .navbar .container-fluid { display: flex; justify-content: space-between; align-items: center; width: 100%; }
     .nav-left, .nav-right { width: 150px; display: flex; align-items: center; }
     .nav-left { justify-content: flex-start; }
     .nav-right { justify-content: flex-end; }
     .nav-center { flex-grow: 1; display: flex; justify-content: center; }
-    /* User bar sits BELOW the header in its own strip, right-aligned. */
-    .user-bar { background: #f8f9fa; border-bottom: 1px solid #dee2e6; padding: 10px 40px; display: flex; justify-content: flex-end; align-items: center; gap: 15px; }
-    
-    .navbar-brand { font-weight: 800; color: var(--primary) !important; font-size: 1.5rem; text-transform: uppercase; letter-spacing: 2px; margin: 0;}
-    .nav-logo { height: 60px; width: auto; }
-    
-    /* Boxed Tab Buttons Below Header */
-    .tab-container { display: flex; justify-content: center; gap: 15px; margin: 25px 0 10px 0; }
-    .tab-btn { padding: 10px 25px; background: #fff; border: 2px solid #212529; color: #212529; font-weight: bold; border-radius: 5px; cursor: pointer; transition: all 0.2s; text-transform: uppercase; font-size: 0.9rem;}
-    .tab-btn:hover { background: #e9ecef; }
-    .tab-btn.active { background: #212529; color: #fff; }
+    .navbar-brand { font-weight: 800; color: var(--ink) !important; font-size: 1.5rem; text-transform: uppercase; letter-spacing: 2px; margin: 0;}
+    .nav-logo { height: 58px; width: auto; }
 
-    .content-section { display: none; padding: 20px 30px; }
+    /* App shell — sidebar + content */
+    .shell { display: flex; min-height: calc(100vh - 90px); }
+    .sidebar {
+      width: var(--sidebar-w); background: var(--ink); color: #fff;
+      display: flex; flex-direction: column; flex-shrink: 0;
+      position: sticky; top: 0; align-self: flex-start;
+      min-height: calc(100vh - 90px);
+    }
+    .sb-brand { padding: 22px 22px 14px; border-bottom: 1px solid #2c2c2c; }
+    .sb-brand .sb-eyebrow { font-size: 0.65rem; letter-spacing: 3px; color: #8a8a8a; text-transform: uppercase; font-weight: 700; }
+    .sb-brand .sb-title { font-size: 1.05rem; font-weight: 800; text-transform: uppercase; letter-spacing: 1.2px; margin-top: 4px; }
+    .sb-nav { flex-grow: 1; padding: 14px 12px; }
+    .sb-section { font-size: 0.65rem; letter-spacing: 2.5px; color: #6b6b6b; text-transform: uppercase; font-weight: 700; padding: 8px 10px 6px; }
+    .sb-item {
+      display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 6px;
+      color: #d4d4d4; text-decoration: none; font-weight: 600; font-size: 0.88rem; cursor: pointer;
+      margin-bottom: 3px;
+    }
+    .sb-item:hover { background: #1f1f1f; color: #fff; }
+    .sb-item.active { background: #fff; color: var(--ink); }
+    .sb-item i { font-size: 1rem; width: 18px; text-align: center; }
+    .sb-footer { padding: 14px; border-top: 1px solid #2c2c2c; }
+    .sb-user { padding: 8px 6px 12px; }
+    .sb-user .sb-name { font-weight: 700; color: #fff; font-size: 0.92rem; line-height: 1.1; }
+    .sb-user .sb-role { font-size: 0.7rem; color: #9a9a9a; letter-spacing: 1.5px; text-transform: uppercase; font-weight: 600; margin-top: 4px; }
+    .sb-logout {
+      display: flex; align-items: center; justify-content: center; gap: 8px;
+      width: 100%; padding: 9px; border: 1px solid #444; background: transparent;
+      color: #fff; font-weight: 700; border-radius: 6px; font-size: 0.78rem; letter-spacing: 1.5px; text-transform: uppercase;
+    }
+    .sb-logout:hover { background: #fff; color: var(--ink); }
+
+    .content { flex-grow: 1; padding: 24px 30px 60px; min-width: 0; }
+    .content-section { display: none; }
     .content-section.active { display: block; }
-    
+
+    /* Petty Cash sub-tabs as segmented control (visually distinct from sidebar) */
+    .segmented {
+      display: inline-flex; flex-wrap: wrap; background: #fff; border: 1px solid var(--line-strong); border-radius: 999px;
+      padding: 4px; gap: 4px; margin-bottom: 20px;
+    }
+    .segmented a {
+      padding: 7px 16px; border-radius: 999px; color: var(--muted); text-decoration: none;
+      font-weight: 700; font-size: 0.78rem; letter-spacing: 1px; text-transform: uppercase;
+    }
+    .segmented a:hover { color: var(--ink); }
+    .segmented a.active { background: var(--ink); color: #fff; }
+
     .due-soon { border-left: 5px solid #dc3545 !important; background-color: #fff5f5; color: #dc3545; }
     .due-soon strong { color: #dc3545; }
+
+    @media (max-width: 992px) {
+      .shell { flex-direction: column; }
+      .sidebar { width: 100%; min-height: 0; position: relative; }
+      .sb-nav { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px; }
+      .sb-section { display: none; }
+      .sb-footer { border-top: 1px solid #2c2c2c; }
+    }
   </style>
 </head>
 <body>
@@ -63,16 +116,6 @@
   </div>
 </nav>
 
-<div class="user-bar">
-  <? if (typeof currentUserName !== 'undefined' && currentUserName) { ?>
-  <div class="text-end d-none d-md-block">
-    <div class="fw-bold text-dark small"><?= currentUserName ?></div>
-    <div class="text-muted" style="font-size: 0.75rem;"><i class="bi bi-person-badge text-dark"></i> <span class="text-uppercase fw-bold"><?= currentUserRole ?></span></div>
-  </div>
-  <? } ?>
-  <button onclick="doLogout()" class="btn btn-sm btn-outline-danger border-1 fw-bold"><i class="bi bi-box-arrow-right"></i> LOGOUT</button>
-</div>
-
 <script>
   // Apps Script web apps run in a sandboxed iframe whose `sandbox` attribute
   // typically allows top-navigation-by-user-activation. Since the user just
@@ -80,12 +123,24 @@
   // window to the deployment URL — a clean full-page load that gets us back
   // to the login screen. If top-navigation is blocked, fall back to an
   // in-iframe replace with a cache-buster.
-  const SCRIPT_URL = "<?= typeof scriptUrl !== 'undefined' ? scriptUrl : '' ?>";
+  // IMPORTANT: this portal is injected into the page via document.write() from
+  // Index.html, which REUSES the same JavaScript realm. Any top-level
+  // const/let (e.g. SCRIPT_URL) declared by Index.html stays bound in the
+  // global lexical environment even after the DOM is wiped, so redeclaring the
+  // same name here throws "Identifier '...' has already been declared" — and
+  // that SyntaxError silently aborts this entire <script> block, leaving
+  // currentUserName/currentUserRole undefined. Assigning to window.* instead of
+  // declaring with const avoids the redeclaration entirely.
+  window.SCRIPT_URL = "<?= typeof scriptUrl !== 'undefined' ? scriptUrl : '' ?>";
   // Logged-in user's display name + role — passed from getSecurePortalHtml via
   // template variables. Available to any front-end function that needs to
   // attribute an action (e.g., BOQ "Uploader" column).
-  const currentUserName = "<?= typeof currentUserName !== 'undefined' ? currentUserName.toString().replace(/"/g, '&quot;') : '' ?>";
-  const currentUserRole = "<?= typeof currentUserRole !== 'undefined' ? currentUserRole.toString().replace(/"/g, '&quot;') : '' ?>";
+  // The Apps Script scriptlet escapes embedded double-quotes via \x22 (hex for
+  // the " character) instead of a literal " in the regex — same runtime result,
+  // but the literal-free form keeps the surrounding "..." string parseable by
+  // VS Code's JS analyzer.
+  window.currentUserName = "<?= typeof currentUserName !== 'undefined' ? currentUserName.toString().replace(/\x22/g, '&quot;') : '' ?>";
+  window.currentUserRole = "<?= typeof currentUserRole !== 'undefined' ? currentUserRole.toString().replace(/\x22/g, '&quot;') : '' ?>";
 
   function doLogout() {
     try {
@@ -94,7 +149,7 @@
       localStorage.removeItem('mrfRole');
     } catch (e) {}
 
-    const target = SCRIPT_URL || (window.location.href.split('?')[0]);
+    const target = window.SCRIPT_URL || (window.location.href.split('?')[0]);
     try {
       window.top.location.href = target;
       return;
@@ -105,17 +160,34 @@
   }
 </script>
 
-<div class="container">
-    <div class="tab-container">
-        <div id="nav-slips" class="tab-btn active" onclick="showSection('slips')">PO & Deposit Slips</div>
-        <div id="nav-payments" class="tab-btn" onclick="showSection('payments'); loadPaymentsQueue();">Payments List</div>
-        <div id="nav-supplier-payments" class="tab-btn" onclick="showSection('supplier-payments'); loadSupplierPayments();">Supplier Payments</div>
-        <div id="nav-boq-adjust" class="tab-btn" onclick="showSection('boq-adjust'); loadBoqAdjustProjects();">BOQ Adjustments</div>
-        <div id="nav-expenses" class="tab-btn" onclick="showSection('expenses'); loadExpenses();">Expense Tracking</div>
+<div class="shell">
+  <aside class="sidebar">
+    <div class="sb-brand">
+      <div class="sb-eyebrow">Portal</div>
+      <div class="sb-title">Accounting</div>
     </div>
-</div>
+    <nav class="sb-nav">
+      <div class="sb-section">Workspace</div>
+      <a id="nav-slips" class="sb-item active" onclick="showSection('slips')"><i class="bi bi-receipt"></i> PO &amp; Deposit Slips</a>
+      <a id="nav-payments" class="sb-item" onclick="showSection('payments'); loadPaymentsQueue();"><i class="bi bi-list-check"></i> Payments List</a>
+      <a id="nav-supplier-payments" class="sb-item" onclick="showSection('supplier-payments'); loadSupplierPayments();"><i class="bi bi-bank"></i> Supplier Payments</a>
+      <a id="nav-boq-upload" class="sb-item" onclick="showSection('boq-upload');"><i class="bi bi-cloud-upload"></i> BOQ Upload</a>
+      <a id="nav-boq-adjust" class="sb-item" onclick="showSection('boq-adjust'); loadBoqAdjustProjects();"><i class="bi bi-pencil-square"></i> BOQ Adjustments</a>
+      <a id="nav-expenses" class="sb-item" onclick="showSection('expenses'); loadExpenses();"><i class="bi bi-cash-stack"></i> Expense Tracking</a>
+      <a id="nav-petty-cash" class="sb-item" onclick="showSection('petty-cash'); pcAccLoadData();"><i class="bi bi-wallet2"></i> Petty Cash</a>
+    </nav>
+    <div class="sb-footer">
+      <? if (typeof currentUserName !== 'undefined' && currentUserName) { ?>
+      <div class="sb-user">
+        <div class="sb-name"><?= currentUserName ?></div>
+        <div class="sb-role"><i class="bi bi-person-badge"></i> <?= currentUserRole ?></div>
+      </div>
+      <? } ?>
+      <button onclick="doLogout()" class="sb-logout"><i class="bi bi-box-arrow-right"></i> Logout</button>
+    </div>
+  </aside>
 
-<div class="main-container">
+  <main class="content">
     
     <div id="section-slips" class="content-section active container">
       <div class="row mb-1">
@@ -194,6 +266,59 @@
             </table>
         </div>
     </div>
+    <!-- =========================== BOQ UPLOAD =========================== -->
+    <div id="section-boq-upload" class="content-section container">
+      <h2 class="mb-4 text-dark fw-bold">BOQ Upload</h2>
+      <p class="text-muted small mb-4">Upload a BOQ workbook, declare the project Total Contract Price, and break down the client payment terms. The system parses every non-SUMMARY tab and writes line items into the BOQ Database for this spreadsheet.</p>
+
+      <div class="row g-4">
+        <div class="col-lg-7">
+          <div class="batch-card">
+            <div class="batch-header">
+              <span><i class="bi bi-cash-coin me-2"></i> Project Total Contract Price</span>
+            </div>
+            <div class="batch-body">
+              <label class="form-label fw-bold small text-muted">Total Contract Price (TCP)</label>
+              <div class="input-group">
+                <span class="input-group-text fw-bold">₱</span>
+                <input type="text" id="boqTcpInput" class="form-control border-dark fw-bold" placeholder="1,000,000.00" oninput="boqFormatTcp(this)">
+              </div>
+              <div class="form-text">Strip commas — they're added automatically as you type.</div>
+            </div>
+          </div>
+
+          <div class="batch-card mt-4">
+            <div class="batch-header">
+              <span><i class="bi bi-list-ol me-2"></i> Payment Terms</span>
+              <button class="btn btn-sm btn-outline-light fw-bold" onclick="boqAddTermRow()"><i class="bi bi-plus-lg"></i> Add Term</button>
+            </div>
+            <div class="batch-body">
+              <p class="small text-muted mb-3">Define how the contract value is billed to the client. Each row pairs a milestone % to a payment % of the TCP.</p>
+              <div id="boqPaymentTermsContainer"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="col-lg-5">
+          <div class="batch-card">
+            <div class="batch-header">
+              <span><i class="bi bi-cloud-upload me-2"></i> Upload BOQ File</span>
+            </div>
+            <div class="batch-body">
+              <p class="small text-muted mb-3">Accepted file types: <strong>.xlsx, .xls, .csv</strong>. The first non-SUMMARY tab with project metadata in <code>B3:B7</code> is used for project registration.</p>
+              <label class="form-label fw-bold small text-muted">BOQ Workbook</label>
+              <input type="file" id="boqFileInput" class="form-control border-dark" accept=".csv,.xlsx,.xls">
+              <button id="boqUploadBtn" class="btn btn-dark w-100 fw-bold mt-4 py-2" onclick="boqUploadFile()">
+                <i class="bi bi-rocket-takeoff me-1"></i> Upload &amp; Ingest into Database
+              </button>
+              <div id="boqStatus" class="text-center mt-3 small fw-bold"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <!-- =========================== END BOQ UPLOAD =========================== -->
+
     <div id="section-boq-adjust" class="content-section container">
        <h2 class="mb-4 text-dark fw-bold">BOQ Adjustments & Additions</h2>
       
@@ -420,6 +545,127 @@
           </div>
         </div>
     </div>
+
+    <!-- =========================== PETTY CASH (Accounting) =========================== -->
+    <div id="section-petty-cash" class="content-section container">
+        <h2 class="mb-4 text-dark fw-bold">Petty Cash</h2>
+
+        <!-- Sub-tabs inside Petty Cash — segmented style, visually distinct from sidebar -->
+        <div class="segmented" id="pca-subtabs" role="tablist">
+            <a id="pca-tab-approval" class="active" href="#" onclick="pcaSwitchTab('approval'); return false;">Replenishment Approval</a>
+            <a id="pca-tab-direct" href="#" onclick="pcaSwitchTab('direct'); return false;">Direct Replenishment</a>
+            <a id="pca-tab-balances" href="#" onclick="pcaSwitchTab('balances'); return false;">Project Balances</a>
+            <a id="pca-tab-history" href="#" onclick="pcaSwitchTab('history'); return false;">All Expenses</a>
+        </div>
+
+        <!-- Approval -->
+        <div id="pca-pane-approval" class="pca-pane">
+          <div class="batch-card">
+            <div class="batch-header">
+              <span><i class="bi bi-check2-square me-2"></i> Pending Replenishment Requests</span>
+              <div>
+                <button class="btn btn-sm btn-success me-1" onclick="pcaBatchProcess('Approved')">Approve Selected</button>
+                <button class="btn btn-sm btn-danger" onclick="pcaBatchProcess('Denied')">Deny Selected</button>
+              </div>
+            </div>
+            <div class="batch-body p-0">
+              <div class="table-responsive">
+                <table class="table align-middle mb-0">
+                  <thead class="table-light">
+                    <tr>
+                      <th width="40"><input type="checkbox" id="pca-select-all" onclick="pcaToggleAll(this)"></th>
+                      <th>Date</th>
+                      <th>Req ID</th>
+                      <th>Requestor</th>
+                      <th>Project</th>
+                      <th>Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody id="pca-approval-body">
+                    <tr><td colspan="6" class="text-center text-muted py-3">No pending requests.</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Direct Replenishment -->
+        <div id="pca-pane-direct" class="pca-pane" style="display:none;">
+          <div class="batch-card">
+            <div class="batch-header"><span><i class="bi bi-cash-coin me-2"></i> Direct Fund Replenishment (No Approval Required)</span></div>
+            <div class="batch-body">
+              <p class="small text-muted mb-3">Use this to add petty cash funds to a project without a request from an employee. If the project doesn't yet have a petty cash entry, one will be created automatically.</p>
+              <div class="row g-3 align-items-end">
+                <div class="col-md-5">
+                  <label class="form-label fw-bold small text-muted">Project / Office <span class="text-danger">*</span></label>
+                  <select id="pca-dir-project" class="form-select border-dark"><option value="">-- Select Project --</option></select>
+                </div>
+                <div class="col-md-5">
+                  <label class="form-label fw-bold small text-muted">Amount <span class="text-danger">*</span></label>
+                  <div class="input-group">
+                    <span class="input-group-text fw-bold">₱</span>
+                    <input type="text" id="pca-dir-amount" class="form-control border-dark" placeholder="0.00" oninput="pcaFormatNumber(this)">
+                  </div>
+                </div>
+                <div class="col-md-2">
+                  <button class="btn btn-dark w-100 fw-bold py-2" onclick="pcaSubmitDirect()">Log Funds</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="batch-card mt-3">
+            <div class="batch-header"><span><i class="bi bi-clock-history me-2"></i> Recent Replenishments (All)</span></div>
+            <div class="batch-body p-0">
+              <div class="table-responsive">
+                <table class="table table-sm align-middle mb-0">
+                  <thead class="table-light"><tr><th>Date</th><th>Req ID</th><th>Requestor</th><th>Project</th><th>Amount</th><th>Status</th><th>Doc</th></tr></thead>
+                  <tbody id="pca-rep-history-body"><tr><td colspan="7" class="text-center text-muted py-3">No replenishments yet.</td></tr></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Project Balances -->
+        <div id="pca-pane-balances" class="pca-pane" style="display:none;">
+          <div class="batch-card">
+            <div class="batch-header"><span><i class="bi bi-piggy-bank me-2"></i> All Petty Cash Project Balances</span></div>
+            <div class="batch-body p-0">
+              <div class="table-responsive">
+                <table class="table align-middle mb-0">
+                  <thead class="table-light"><tr><th>Project</th><th>Allocated</th><th>Spent</th><th>Remaining</th></tr></thead>
+                  <tbody id="pca-balances-body"><tr><td colspan="4" class="text-center text-muted py-3">Loading...</td></tr></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- All Expenses -->
+        <div id="pca-pane-history" class="pca-pane" style="display:none;">
+          <div class="batch-card">
+            <div class="batch-header"><span><i class="bi bi-list-ul me-2"></i> All Logged Petty Cash Expenses</span></div>
+            <div class="batch-body">
+              <div class="row g-2 mb-3">
+                <div class="col-md-4"><input type="text" id="pca-hist-search" class="form-control border-dark" placeholder="Search..." onkeyup="pcaRenderExpenses()"></div>
+                <div class="col-md-3"><input type="date" id="pca-hist-from" class="form-control border-dark" onchange="pcaRenderExpenses()"></div>
+                <div class="col-md-3"><input type="date" id="pca-hist-to" class="form-control border-dark" onchange="pcaRenderExpenses()"></div>
+                <div class="col-md-2"><button class="btn btn-outline-dark w-100" onclick="pcaClearHistFilters()">Clear</button></div>
+              </div>
+              <div class="table-responsive">
+                <table class="table table-sm align-middle">
+                  <thead class="table-light"><tr><th>Date</th><th>Doc Ref</th><th>User</th><th>Project</th><th>Item</th><th>Amount</th><th>Receipt</th></tr></thead>
+                  <tbody id="pca-expense-body"><tr><td colspan="7" class="text-center text-muted py-3">No expenses logged.</td></tr></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+    </div>
+    <!-- ========================= END PETTY CASH (Accounting) ========================= -->
+  </main>
 </div>
 
 <div class="modal fade" id="adjustBoqModal" tabindex="-1" aria-hidden="true">
@@ -468,6 +714,157 @@
 </div>
 
 <script>
+  // ========================================================================
+  // BOQ UPLOAD PORTAL
+  // ------------------------------------------------------------------------
+  // Wraps the original BOQ Ingestion Portal in the Schedio shell. The
+  // back-end is processBoqPortalUpload() in MRF.js — it writes to the
+  // ACTIVE spreadsheet (no external DB URL).
+  // ========================================================================
+  function boqFormatTcp(input) {
+    const digits = input.value.replace(/[^0-9.]/g, '');
+    const parts = digits.split('.');
+    if (parts.length > 2) {
+      input.value = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ",") + '.' + parts.slice(1).join('');
+      return;
+    }
+    if (parts[0] === "" && parts.length === 1) { input.value = ""; return; }
+    parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+    input.value = parts.join('.');
+  }
+
+  function boqAddTermRow() {
+    const container = document.getElementById('boqPaymentTermsContainer');
+    const row = document.createElement('div');
+    row.className = 'row g-2 align-items-center mb-2 boq-term-row';
+    row.innerHTML = `
+      <div class="col-md-5">
+        <div class="input-group input-group-sm">
+          <span class="input-group-text fw-bold">Milestone %</span>
+          <input type="number" class="form-control boq-milestone border-dark" placeholder="e.g. 20" min="0" max="100">
+        </div>
+      </div>
+      <div class="col-md-5">
+        <div class="input-group input-group-sm">
+          <span class="input-group-text fw-bold">Payment %</span>
+          <input type="number" class="form-control boq-payment border-dark" placeholder="e.g. 40" min="0" max="100">
+        </div>
+      </div>
+      <div class="col-md-2 text-end">
+        <button type="button" class="btn btn-sm btn-outline-danger fw-bold" onclick="this.closest('.boq-term-row').remove()" title="Remove">
+          <i class="bi bi-x-lg"></i>
+        </button>
+      </div>
+    `;
+    container.appendChild(row);
+  }
+
+  function boqResetForm() {
+    document.getElementById('boqTcpInput').value = '';
+    document.getElementById('boqFileInput').value = '';
+    document.getElementById('boqPaymentTermsContainer').innerHTML = '';
+    boqAddTermRow(); // start fresh with a single empty row
+  }
+
+  function boqUploadFile() {
+    const fileInput = document.getElementById('boqFileInput');
+    const tcpInput  = document.getElementById('boqTcpInput');
+    const statusDiv = document.getElementById('boqStatus');
+    const uploadBtn = document.getElementById('boqUploadBtn');
+
+    const rawTcp = tcpInput.value.replace(/,/g, '');
+
+    statusDiv.className = 'text-center mt-3 small fw-bold';
+
+    if (!rawTcp || isNaN(rawTcp) || Number(rawTcp) < 0) {
+      statusDiv.innerHTML = '❌ Please enter a valid Total Contract Price.';
+      statusDiv.classList.add('text-danger');
+      return;
+    }
+
+    const termRows = document.querySelectorAll('.boq-term-row');
+    if (!termRows.length) {
+      statusDiv.innerHTML = '❌ Please add at least one payment term.';
+      statusDiv.classList.add('text-danger');
+      return;
+    }
+
+    const paymentTerms = [];
+    let termsValid = true;
+    termRows.forEach(row => {
+      const m = row.querySelector('.boq-milestone').value;
+      const p = row.querySelector('.boq-payment').value;
+      if (m === "" || p === "") {
+        termsValid = false;
+      } else {
+        paymentTerms.push({ milestone: m, payment: p });
+      }
+    });
+
+    if (!termsValid) {
+      statusDiv.innerHTML = '❌ Please fill out every Milestone and Payment % field.';
+      statusDiv.classList.add('text-danger');
+      return;
+    }
+
+    if (!fileInput.files || fileInput.files.length === 0) {
+      statusDiv.innerHTML = '❌ Please select a BOQ file to upload.';
+      statusDiv.classList.add('text-danger');
+      return;
+    }
+
+    const file = fileInput.files[0];
+    const validExtensions = ['.csv', '.xlsx', '.xls'];
+    if (!validExtensions.some(ext => file.name.toLowerCase().endsWith(ext))) {
+      statusDiv.innerHTML = '❌ Invalid file type. Please upload a .csv, .xlsx, or .xls workbook.';
+      statusDiv.classList.add('text-danger');
+      return;
+    }
+
+    showLoader();
+    uploadBtn.disabled = true;
+    statusDiv.classList.remove('text-danger', 'text-success');
+    statusDiv.classList.add('text-primary');
+    statusDiv.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status"></span> Uploading and processing — please wait...';
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const payload = {
+        fileName: file.name,
+        mimeType: file.type,
+        data: e.target.result.split(',')[1],
+        tcp: rawTcp,
+        terms: paymentTerms,
+        uploader: (typeof currentUserName !== 'undefined' && currentUserName) ? currentUserName : ''
+      };
+
+      google.script.run
+        .withSuccessHandler(message => {
+          hideLoader();
+          uploadBtn.disabled = false;
+          statusDiv.classList.remove('text-danger', 'text-primary');
+          statusDiv.classList.add('text-success');
+          statusDiv.innerHTML = (message || 'Done.').toString().replace(/\n/g, '<br>');
+          Swal.fire('Success', (message || 'BOQ uploaded.').toString(), 'success').then(boqResetForm);
+        })
+        .withFailureHandler(err => {
+          hideLoader();
+          uploadBtn.disabled = false;
+          statusDiv.classList.remove('text-primary', 'text-success');
+          statusDiv.classList.add('text-danger');
+          statusDiv.innerHTML = '❌ Error: ' + (err && err.message ? err.message : err);
+          Swal.fire('Error', err && err.message ? err.message : 'Upload failed.', 'error');
+        })
+        .processBoqPortalUpload(payload);
+    };
+    reader.readAsDataURL(file);
+  }
+
+  // Seed one empty term row when the page first opens so the user sees the shape.
+  document.addEventListener('DOMContentLoaded', () => {
+    if (document.getElementById('boqPaymentTermsContainer')) boqAddTermRow();
+  });
+
   // --- UTILITY FORMATTERS ---
   function formatCurrencyInput(el) {
       let val = el.value.replace(/[^0-9.]/g, ''); 
@@ -499,9 +896,10 @@
   function showSection(sectionId) {
       document.querySelectorAll('.content-section').forEach(sec => sec.classList.remove('active'));
       document.getElementById('section-' + sectionId).classList.add('active');
-      
-      document.querySelectorAll('.tab-btn').forEach(link => link.classList.remove('active'));
-      document.getElementById('nav-' + sectionId).classList.add('active');
+
+      document.querySelectorAll('.sidebar .sb-item').forEach(link => link.classList.remove('active'));
+      const navEl = document.getElementById('nav-' + sectionId);
+      if (navEl) navEl.classList.add('active');
   }
 
   function showLoader() { document.getElementById('loader').style.display = 'flex'; }
@@ -1371,6 +1769,292 @@
               <td>${receipt}</td>
           </tr>`;
       }).join('');
+  }
+
+  // ========================================================================
+  // PETTY CASH — Accounting side
+  // ========================================================================
+  let pcaGlobalData = { projects: [], allProjects: [], allKnownProjectNames: [], expenses: [], replenishments: [] };
+
+  function pcaSwitchTab(tab) {
+    ['approval', 'direct', 'balances', 'history'].forEach(t => {
+      const tabEl = document.getElementById('pca-tab-' + t);
+      const paneEl = document.getElementById('pca-pane-' + t);
+      if (tabEl) tabEl.classList.remove('active');
+      if (paneEl) paneEl.style.display = 'none';
+    });
+    document.getElementById('pca-tab-' + tab).classList.add('active');
+    document.getElementById('pca-pane-' + tab).style.display = 'block';
+  }
+
+  function pcaFormatNumber(el) {
+    let v = el.value.replace(/[^0-9.]/g, '');
+    let p = v.split('.');
+    if (p.length > 2) p.pop();
+    if (p[0]) p[0] = parseInt(p[0], 10).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+    el.value = p.join('.');
+  }
+
+  // Wrap each render so one failing block doesn't leave the rest empty.
+  function pcaSafe_(label, fn) {
+    try { fn(); }
+    catch (e) { console.error('[Petty Cash] ' + label + ' failed:', e); }
+  }
+
+  // Loads Petty Cash via the STRING endpoint getPettyCashDataString(). The
+  // plain-object getPettyCashData() computes fine server-side (~1s) but its
+  // Accounting/Finance payload — which carries extra fields the employee portal
+  // never sends (allKnownProjectNames, full allProjects, role flags, _diag) —
+  // does NOT make it back across the google.script.run bridge: neither handler
+  // fires and the loader hangs (the reported symptom). Returning a JSON string
+  // (server JSON.stringify, client JSON.parse) always crosses the bridge
+  // cleanly. The employee portal gets away with the object version only because
+  // its payload is smaller/simpler.
+  //
+  // WATCHDOG: if for any reason neither handler fires within 15s, the loader is
+  // dismissed automatically — no infinite spinner — and pettyCashPing() reports
+  // exactly what the server sees (account found? sheet sizes?) so a stuck load
+  // becomes an actionable message instead of a frozen screen.
+  let pcaLoadInFlight = false;
+  function pcAccLoadData() {
+    if (pcaLoadInFlight) return;   // ignore double-clicks while a load is running
+    pcaLoadInFlight = true;
+    showLoader();
+
+    let settled = false;
+    const finish = () => { settled = true; pcaLoadInFlight = false; hideLoader(); };
+
+    const watchdog = setTimeout(() => {
+      if (settled) return;
+      finish();
+      google.script.run
+        .withSuccessHandler(ping => {
+          Swal.fire(
+            'Petty Cash timed out',
+            'The portal could not load petty cash. Diagnostics:<br><pre style="text-align:left;white-space:pre-wrap;font-size:12px;">'
+              + JSON.stringify(ping, null, 2) + '</pre>',
+            'warning'
+          );
+        })
+        .withFailureHandler(() => {
+          Swal.fire('Error', 'Petty Cash could not be loaded (request timed out). Please try again.', 'error');
+        })
+        .pettyCashPing(currentUserName);
+    }, 15000);
+
+    google.script.run
+      .withSuccessHandler(json => {
+        if (settled) return;       // watchdog already handled it
+        clearTimeout(watchdog);
+        finish();
+        let data;
+        try { data = (typeof json === 'string') ? JSON.parse(json) : json; }
+        catch (e) {
+          Swal.fire('Error', 'Failed to parse petty cash data.', 'error');
+          return;
+        }
+        if (!data || data.error) {
+          Swal.fire('Error', (data && data.error) || 'Failed to load petty cash data.', 'error');
+          return;
+        }
+        pcaGlobalData = data;
+        pcaSafe_('pcaRenderPendingApprovals',     pcaRenderPendingApprovals);
+        pcaSafe_('pcaRenderBalances',             pcaRenderBalances);
+        pcaSafe_('pcaRenderExpenses',             pcaRenderExpenses);
+        pcaSafe_('pcaRenderRepHistory',           pcaRenderRepHistory);
+        pcaSafe_('pcaPopulateDirectProjectDropdown', pcaPopulateDirectProjectDropdown);
+      })
+      .withFailureHandler(err => {
+        if (settled) return;
+        clearTimeout(watchdog);
+        finish();
+        Swal.fire('Error', (err && err.message) ? err.message : 'Failed to load petty cash data.', 'error');
+      })
+      .getPettyCashDataString(currentUserName);
+  }
+
+  function pcaPopulateDirectProjectDropdown() {
+    const sel = document.getElementById('pca-dir-project');
+    if (!sel) return;
+    // Merge known petty-cash projects (have row IDs) with master project DB names.
+    // Defensive: rows from the server may have empty/null name fields — skip those
+    // instead of throwing on p.name.toLowerCase().
+    const seen = {};
+    const opts = ['<option value="">-- Select Project --</option>'];
+    (pcaGlobalData.allProjects || []).forEach(p => {
+      if (!p || !p.name) return;
+      seen[p.name.toLowerCase()] = true;
+      opts.push(`<option value="${p.id}" data-name="${p.name.replace(/"/g,'&quot;')}">${p.name} <span>(Bal: ₱${Number(p.balance).toLocaleString()})</span></option>`);
+    });
+    (pcaGlobalData.allKnownProjectNames || []).forEach(name => {
+      if (!name) return;
+      if (seen[name.toLowerCase()]) return;
+      opts.push(`<option value="" data-name="${name.replace(/"/g,'&quot;')}">${name} (new)</option>`);
+    });
+    sel.innerHTML = opts.join('');
+  }
+
+  function pcaRenderPendingApprovals() {
+    const body = document.getElementById('pca-approval-body');
+    const pending = (pcaGlobalData.replenishments || []).filter(r => r[7] === 'Pending');
+    if (!pending.length) {
+      body.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-3">No pending requests.</td></tr>';
+      return;
+    }
+    body.innerHTML = pending.map(r => `
+      <tr>
+        <td><input type="checkbox" class="pca-rep-check" value="${r[1]}"></td>
+        <td class="small">${new Date(r[0]).toLocaleDateString()}</td>
+        <td class="fw-bold">${r[1]}</td>
+        <td>${r[2] || ''}</td>
+        <td>${r[5] || ''}</td>
+        <td class="fw-bold">₱${Number(r[6]).toLocaleString('en-US',{minimumFractionDigits:2})}</td>
+      </tr>`).join('');
+  }
+
+  function pcaToggleAll(src) {
+    document.querySelectorAll('.pca-rep-check').forEach(cb => cb.checked = src.checked);
+  }
+
+  function pcaBatchProcess(action) {
+    const sel = [];
+    document.querySelectorAll('.pca-rep-check:checked').forEach(cb => sel.push(cb.value));
+    if (!sel.length) return Swal.fire('Warning', 'Select at least one request.', 'warning');
+
+    Swal.fire({
+      title: `${action === 'Approved' ? 'Approve' : 'Deny'} ${sel.length} request(s)?`,
+      icon: 'question', showCancelButton: true, confirmButtonColor: action === 'Approved' ? '#198754' : '#dc3545'
+    }).then(r => {
+      if (!r.isConfirmed) return;
+      showLoader();
+      google.script.run.withSuccessHandler(res => {
+        hideLoader();
+        if (res && res.success) {
+          Swal.fire('Done', `${sel.length} request(s) ${action.toLowerCase()}.`, 'success');
+          document.getElementById('pca-select-all').checked = false;
+          pcAccLoadData();
+        } else {
+          Swal.fire('Error', (res && res.error) || 'Action failed.', 'error');
+        }
+      }).withFailureHandler(err => {
+        hideLoader();
+        Swal.fire('Error', err.message, 'error');
+      }).processBatchPettyCashReplenish(sel, action);
+    });
+  }
+
+  function pcaSubmitDirect() {
+    const sel = document.getElementById('pca-dir-project');
+    if (sel.selectedIndex <= 0) return Swal.fire('Error', 'Select a project.', 'error');
+    const opt = sel.options[sel.selectedIndex];
+    const pid = sel.value;  // may be empty for new auto-create
+    const pnm = opt.getAttribute('data-name') || opt.text;
+    const amt = document.getElementById('pca-dir-amount').value;
+    if (!amt || Number(amt.replace(/,/g, '')) <= 0) return Swal.fire('Error', 'Enter a valid amount.', 'error');
+
+    showLoader();
+    google.script.run.withSuccessHandler(res => {
+      hideLoader();
+      if (res && res.success) {
+        Swal.fire('Logged', 'Funds replenished directly.', 'success');
+        document.getElementById('pca-dir-amount').value = '';
+        pcAccLoadData();
+      } else {
+        Swal.fire('Error', (res && res.error) || 'Replenishment failed.', 'error');
+      }
+    }).withFailureHandler(err => {
+      hideLoader();
+      Swal.fire('Error', err.message, 'error');
+    }).directPettyCashReplenish({
+      user: currentUserName, email: '',
+      projectId: pid, projectName: pnm, amount: amt
+    });
+  }
+
+  function pcaRenderBalances() {
+    const body = document.getElementById('pca-balances-body');
+    if (!body) return;
+    const projects = (pcaGlobalData.allProjects || []).filter(p => p && p.name);
+    if (!projects.length) {
+      body.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-3">No petty cash projects yet. Use Direct Replenishment to set up the first project.</td></tr>';
+      return;
+    }
+    body.innerHTML = projects.map(p => `
+      <tr>
+        <td class="fw-bold">${escapeHtml(p.name)}</td>
+        <td>₱${Number(p.allocated).toLocaleString('en-US',{minimumFractionDigits:2})}</td>
+        <td>₱${Number(p.spent).toLocaleString('en-US',{minimumFractionDigits:2})}</td>
+        <td class="fw-bold ${p.balance < 2000 ? 'text-danger' : 'text-success'}">₱${Number(p.balance).toLocaleString('en-US',{minimumFractionDigits:2})}</td>
+      </tr>`).join('');
+  }
+
+  function pcaRenderExpenses() {
+    const body = document.getElementById('pca-expense-body');
+    const term = (document.getElementById('pca-hist-search').value || '').toLowerCase();
+    const fDate = document.getElementById('pca-hist-from').value;
+    const tDate = document.getElementById('pca-hist-to').value;
+
+    let comb = (pcaGlobalData.expenses || []).map(e => ({
+      d: new Date(e[0]), r: e[1], u: e[2], p: e[3], i: e[4], a: e[5], rec: e[7]
+    }));
+    comb.sort((a, b) => b.d - a.d);
+
+    const filt = comb.filter(e => {
+      const t = (e.r + ' ' + e.u + ' ' + e.p + ' ' + e.i).toLowerCase().includes(term);
+      let okF = true, okT = true;
+      if (fDate) { const fd = new Date(fDate); fd.setHours(0,0,0,0); if (e.d < fd) okF = false; }
+      if (tDate) { const td = new Date(tDate); td.setHours(23,59,59,999); if (e.d > td) okT = false; }
+      return t && okF && okT;
+    });
+
+    if (!filt.length) {
+      body.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-3">No expenses logged.</td></tr>';
+      return;
+    }
+    body.innerHTML = filt.map(e => {
+      const rec = (e.rec && e.rec.toString().startsWith('http'))
+        ? `<a href="${e.rec}" target="_blank" class="btn btn-sm btn-outline-dark">View</a>`
+        : '-';
+      return `<tr>
+        <td class="small">${e.d.toLocaleDateString()}</td>
+        <td class="fw-bold">${e.r}</td>
+        <td>${e.u}</td>
+        <td>${e.p}</td>
+        <td>${e.i}</td>
+        <td class="fw-bold">₱${Number(e.a).toLocaleString('en-US',{minimumFractionDigits:2})}</td>
+        <td>${rec}</td>
+      </tr>`;
+    }).join('');
+  }
+
+  function pcaClearHistFilters() {
+    document.getElementById('pca-hist-search').value = '';
+    document.getElementById('pca-hist-from').value = '';
+    document.getElementById('pca-hist-to').value = '';
+    pcaRenderExpenses();
+  }
+
+  function pcaRenderRepHistory() {
+    const body = document.getElementById('pca-rep-history-body');
+    const reps = (pcaGlobalData.replenishments || []).slice(0, 25);
+    if (!reps.length) {
+      body.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-3">No replenishments yet.</td></tr>';
+      return;
+    }
+    body.innerHTML = reps.map(r => {
+      const status = r[7] || '';
+      const badge = status === 'Approved' ? 'bg-success' : (status === 'Denied' ? 'bg-danger' : 'bg-secondary');
+      const doc = (r[8] && r[8].toString().startsWith('http')) ? `<a href="${r[8]}" target="_blank">View</a>` : '-';
+      return `<tr>
+        <td class="small">${new Date(r[0]).toLocaleDateString()}</td>
+        <td class="fw-bold">${r[1]}</td>
+        <td>${r[2] || ''}</td>
+        <td>${r[5] || ''}</td>
+        <td class="fw-bold">₱${Number(r[6]).toLocaleString('en-US',{minimumFractionDigits:2})}</td>
+        <td><span class="badge ${badge}">${status}</span></td>
+        <td>${doc}</td>
+      </tr>`;
+    }).join('');
   }
 </script>
 </body>
