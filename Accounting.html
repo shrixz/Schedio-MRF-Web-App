@@ -169,7 +169,6 @@
     <nav class="sb-nav">
       <div class="sb-section">Workspace</div>
       <a id="nav-slips" class="sb-item active" onclick="showSection('slips')"><i class="bi bi-receipt"></i> PO &amp; Deposit Slips</a>
-      <a id="nav-payments" class="sb-item" onclick="showSection('payments'); loadPaymentsQueue();"><i class="bi bi-list-check"></i> Payments List</a>
       <a id="nav-supplier-payments" class="sb-item" onclick="showSection('supplier-payments'); loadSupplierPayments();"><i class="bi bi-bank"></i> Supplier Payments</a>
       <a id="nav-boq-upload" class="sb-item" onclick="showSection('boq-upload');"><i class="bi bi-cloud-upload"></i> BOQ Upload</a>
       <a id="nav-boq-adjust" class="sb-item" onclick="showSection('boq-adjust'); loadBoqAdjustProjects();"><i class="bi bi-pencil-square"></i> BOQ Adjustments</a>
@@ -202,24 +201,9 @@
       <div class="mt-2"><h5 class="mb-4 fw-bold border-bottom pb-2 text-uppercase">Pending Deposit Slips</h5><div id="accQueueBody"></div></div>
     </div>
 
-    <div id="section-payments" class="content-section container">
-      <div class="row mb-1">
-        <div class="col-12 text-end">
-          <label class="fw-bold me-1 small text-uppercase">Project:</label>
-          <select id="payProjectFilter" class="form-select form-select-sm d-inline-block w-auto border-dark fw-bold me-2" onchange="filterPaymentsQueue()"><option value="ALL">All Projects</option></select>
-          <label class="fw-bold me-1 small text-uppercase">Due Filter:</label>
-          <select id="payStatusFilter" class="form-select form-select-sm d-inline-block w-auto border-dark fw-bold me-2" onchange="filterPaymentsQueue()">
-              <option value="ALL">All Pendings</option>
-              <option value="DUE_SOON">Due in <= 3 Days / Overdue</option>
-          </select>
-        </div>
-      </div>
-      <div class="mt-2"><h5 class="mb-4 fw-bold border-bottom pb-2 text-uppercase">Pending Payments Schedule</h5><div id="paymentsQueueBody"></div></div>
-    </div>
-
     <div id="section-supplier-payments" class="content-section container">
         <h2 class="mb-4 text-dark fw-bold">Supplier Payments</h2>
-        <p class="text-muted small">One row per payment term. Bank / Check Number / Payment Amount are filled in when a check is issued.</p>
+        <p class="text-muted small">One row per payment term. Encoded POs populate this list automatically. Use the filters to see what's <strong>due soon</strong> or still <strong>unpaid</strong>; "Log Payment" records the bank/check details, or "Mark Deposited" settles a term for its full invoiced amount in one click.</p>
         <div class="row mb-3 g-2 align-items-end">
             <div class="col-md-3">
                 <label class="form-label fw-bold small text-muted">Filter Supplier</label>
@@ -227,12 +211,19 @@
                     <option value="ALL">All Suppliers</option>
                 </select>
             </div>
-            <div class="col-md-3">
+            <div class="col-md-2">
                 <label class="form-label fw-bold small text-muted">Payment Status</label>
                 <select class="form-select border-dark" id="payLogStatusFilter" onchange="filterSupplierPayments()">
-                    <option value="ALL">All Statuses</option>
                     <option value="UNPAID">Unpaid</option>
                     <option value="PAID">Paid</option>
+                    <option value="ALL">All Statuses</option>
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label class="form-label fw-bold small text-muted">Due</label>
+                <select class="form-select border-dark" id="payLogDueFilter" onchange="filterSupplierPayments()">
+                    <option value="ALL">Any Due Date</option>
+                    <option value="DUE_SOON">Due in &le; 3 Days / Overdue</option>
                 </select>
             </div>
             <div class="col-md-3">
@@ -992,116 +983,11 @@
     }
   }
 
-  /* --- PAYMENTS FUNCTIONS --- */
-  let globalPaymentsData = [];
-
-  function loadPaymentsQueue() {
-      showLoader();
-      google.script.run.withSuccessHandler(data => {
-          globalPaymentsData = data;
-          
-          const projects = new Set();
-          data.forEach(g => projects.add(g.project));
-          const projSelect = document.getElementById('payProjectFilter');
-          projSelect.innerHTML = '<option value="ALL">All Projects</option>' + [...projects].sort().map(p => `<option value="${p}">${p}</option>`).join('');
-          
-          filterPaymentsQueue();
-          hideLoader();
-      }).getPaymentTermsQueue();
-  }
-
-  function filterPaymentsQueue() {
-      const projFilter = document.getElementById('payProjectFilter').value;
-      const statusFilter = document.getElementById('payStatusFilter').value;
-      const body = document.getElementById('paymentsQueueBody');
-      
-      let html = "";
-      let count = 0;
-      let today = new Date();
-      today.setHours(0,0,0,0);
-
-      globalPaymentsData.forEach(g => {
-          if (projFilter !== "ALL" && g.project !== projFilter) return;
-
-          let termsHtml = "";
-          let validTermsCount = 0;
-
-          g.termsList.forEach(term => {
-              let isDueSoon = false;
-              if (term.termDate) {
-                  let tDate = new Date(term.termDate);
-                  if (!isNaN(tDate.getTime())) {
-                      tDate.setHours(0,0,0,0);
-                      let diffDays = Math.ceil((tDate - today) / (1000 * 60 * 60 * 24));
-                      if (diffDays <= 3) isDueSoon = true;
-                  }
-              }
-
-              if (statusFilter === "DUE_SOON" && !isDueSoon) return;
-
-              validTermsCount++;
-              let dueClass = isDueSoon ? "due-soon" : "border-dark";
-              
-              let rowIndicesStr = term.rowIndices.join(',');
-
-              termsHtml += `
-                <div class="d-flex justify-content-between align-items-center mb-2 p-2 border rounded ${dueClass}">
-                   <div>
-                      <strong class="d-block text-uppercase">${term.termDesc}</strong>
-                      <span class="small fw-bold">Due Date: ${term.termDate || 'N/A'}</span><br>
-                      <span class="small text-muted" style="font-size:0.75rem;">Items: ${term.items.join(', ')}</span>
-                   </div>
-                   <div class="text-end">
-                      <strong class="d-block mb-1 fs-6">${formatMoney(term.totalAmount)}</strong>
-                      <button class="btn btn-sm btn-success fw-bold" onclick="markDeposited('${rowIndicesStr}')">MARK DEPOSITED</button>
-                   </div>
-                </div>
-              `;
-          });
-
-          if (validTermsCount > 0) {
-              count++;
-              html += `
-                <div class="batch-card mb-3">
-                  <div class="batch-header">
-                    <div><span class="badge bg-light text-dark me-2">${g.mrfId.replace("MRF","PO").replace("ARF","PO")}</span> <strong>${g.project}</strong></div>
-                    <div class="small">SUPPLIER: ${g.supplier}</div>
-                  </div>
-                  <div class="batch-body p-3">
-                    ${termsHtml}
-                  </div>
-                </div>
-              `;
-          }
-      });
-
-      if (count === 0) {
-          html = '<div class="alert alert-secondary text-center">NO PENDING PAYMENTS MATCHING FILTERS.</div>';
-      }
-      body.innerHTML = html;
-  }
-
-  function markDeposited(indicesStr) {
-      const rowIndices = indicesStr.split(',').map(Number);
-      Swal.fire({
-          title: 'Mark as Deposited?',
-          text: "This will remove this payment term from the queue.",
-          icon: 'question',
-          showCancelButton: true,
-          confirmButtonColor: '#28a745',
-          confirmButtonText: 'Yes, mark it!'
-      }).then((result) => {
-          if (result.isConfirmed) {
-              showLoader();
-              google.script.run.withSuccessHandler(res => {
-                  hideLoader();
-                  Swal.fire('Success', res, 'success').then(loadPaymentsQueue);
-              }).markPaymentDeposited(rowIndices);
-          }
-      });
-  }
-
   // --- SUPPLIER PAYMENTS (one row per payment term) ---
+  // This single tab replaces the former separate "Payments List": it shows the
+  // same Payment Logs terms, with Supplier/Status/Due/search filters and both
+  // settle actions (LOG PAYMENT for full details, MARK DEPOSITED for a one-click
+  // full settle).
   let globalPaymentSchedule = [];
   let bankListCache = [];
 
@@ -1130,8 +1016,12 @@
   function filterSupplierPayments() {
       const supFilter = document.getElementById('paySupplierFilter').value;
       const statusFilter = document.getElementById('payLogStatusFilter').value;
+      const dueFilter = document.getElementById('payLogDueFilter').value;
       const searchQ = document.getElementById('payLogSearchBox').value.toLowerCase();
       const tbody = document.getElementById('supplierPaymentsBody');
+
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
 
       let html = "";
       let count = 0;
@@ -1141,6 +1031,19 @@
           if (statusFilter === "PAID" && !r.isPaid) return;
           if (statusFilter === "UNPAID" && r.isPaid) return;
 
+          // "Due soon" = due within 3 days or already overdue. Mirrors the old
+          // Payments List urgency filter. Only meaningful for unpaid terms.
+          let isDueSoon = false;
+          if (r.dueDateRaw) {
+              const tDate = new Date(r.dueDateRaw);
+              if (!isNaN(tDate.getTime())) {
+                  tDate.setHours(0, 0, 0, 0);
+                  const diffDays = Math.ceil((tDate - today) / (1000 * 60 * 60 * 24));
+                  if (diffDays <= 3) isDueSoon = true;
+              }
+          }
+          if (dueFilter === "DUE_SOON" && (r.isPaid || !isDueSoon)) return;
+
           const blob = `${r.purchaseOrder} ${r.paymentTerm} ${r.supplier}`.toLowerCase();
           if (searchQ && !blob.includes(searchQ)) return;
 
@@ -1148,8 +1051,12 @@
           const pctStr = (r.percent || 0).toFixed(r.percent % 1 === 0 ? 0 : 2) + '%';
           const action = r.isPaid
               ? `<button class="btn btn-sm btn-outline-dark fw-bold" onclick="openLogPaymentModal(${r.row})">Edit</button>`
-              : `<button class="btn btn-sm btn-primary fw-bold" onclick="openLogPaymentModal(${r.row})">LOG PAYMENT</button>`;
+              : `<div class="d-flex gap-1 justify-content-center">
+                   <button class="btn btn-sm btn-primary fw-bold" onclick="openLogPaymentModal(${r.row})">LOG PAYMENT</button>
+                   <button class="btn btn-sm btn-success fw-bold" onclick="markDepositedSP(${r.row})" title="Settle the full invoiced amount in one click">MARK DEPOSITED</button>
+                 </div>`;
           const paidBadge = r.isPaid ? '<span class="badge bg-success ms-1"><i class="bi bi-check-circle"></i></span>' : '';
+          const dueCls = (!r.isPaid && isDueSoon) ? ' text-danger fw-bold' : '';
 
           html += `
           <tr>
@@ -1158,7 +1065,7 @@
               <td class="text-center">${pctStr}</td>
               <td>${escapeHtml(r.supplier)}</td>
               <td class="text-end fw-bold">${formatMoney(r.invoicedAmount)}</td>
-              <td class="small">${escapeHtml(r.dueDate || 'TBD')}</td>
+              <td class="small${dueCls}">${escapeHtml(r.dueDate || 'TBD')}</td>
               <td>${escapeHtml(r.bank || '-')}</td>
               <td>${escapeHtml(r.checkNumber || '-')}</td>
               <td class="text-end fw-bold ${r.isPaid ? 'text-success' : 'text-muted'}">${r.paymentAmount > 0 ? formatMoney(r.paymentAmount) : '-'}</td>
@@ -1168,6 +1075,30 @@
 
       if (count === 0) html = '<tr><td colspan="10" class="text-center py-4 text-muted">No payment terms match your filters. Encoded POs will populate this list automatically.</td></tr>';
       tbody.innerHTML = html;
+  }
+
+  // Quick-settle a single term for its full invoiced amount (auto-fills a
+  // placeholder bank/check). Same backend the old Payments List used.
+  function markDepositedSP(row) {
+      Swal.fire({
+          title: 'Mark as Deposited?',
+          text: "This settles the term for its full invoiced amount. Use LOG PAYMENT instead if you need to record the actual bank, check number, or a partial amount.",
+          icon: 'question',
+          showCancelButton: true,
+          confirmButtonColor: '#28a745',
+          confirmButtonText: 'Yes, mark it!'
+      }).then((result) => {
+          if (result.isConfirmed) {
+              showLoader();
+              google.script.run.withSuccessHandler(res => {
+                  hideLoader();
+                  Swal.fire('Success', res, 'success').then(loadSupplierPayments);
+              }).withFailureHandler(err => {
+                  hideLoader();
+                  Swal.fire('Error', err.message, 'error');
+              }).markPaymentDeposited([row]);
+          }
+      });
   }
 
   function openLogPaymentModal(rowIdx) {

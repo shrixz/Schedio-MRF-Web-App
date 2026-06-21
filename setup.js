@@ -1,6 +1,13 @@
 // =============================================================================
 // SETUP — idempotent. Safe to run repeatedly. Creates any missing sheets and
 // seeds default dropdown values. Never deletes or overwrites existing rows.
+//
+// It also "heals" the header row of sheets that ALREADY exist: it appends any
+// missing trailing columns and fills blank header cells, so you can fix column
+// drift by just re-running setup instead of editing sheets by hand. It will
+// NOT overwrite a header cell that is already filled with different text (that
+// might be a deliberate rename) — such mismatches are reported, not changed.
+// No data rows are ever touched.
 // =============================================================================
 //
 // SHEET LAYOUT
@@ -116,12 +123,22 @@ function setup() {
     ["Payment Method", "Other",         "", "Yes", 6]
   ];
 
-  // --- Create any missing sheet with its header row ---
+  // --- Create any missing sheet, or heal the header of an existing one ---
   let createdCount = 0;
+  let healedCols = 0;
+  const mismatches = [];
   Object.keys(sheetSchemas).forEach(function (sheetName) {
-    if (ss.getSheetByName(sheetName)) return;
-    const sheet = ss.insertSheet(sheetName);
     const headers = sheetSchemas[sheetName];
+    const existing = ss.getSheetByName(sheetName);
+
+    if (existing) {
+      // Sheet is already there — bring its header row up to schema without
+      // disturbing any data. Reports drift instead of clobbering renames.
+      healedCols += healSheetHeaders_(existing, headers, sheetName, mismatches);
+      return;
+    }
+
+    const sheet = ss.insertSheet(sheetName);
     sheet.getRange(1, 1, 1, headers.length).setValues([headers]).setFontWeight("bold");
     sheet.setFrozenRows(1);
     createdCount++;
@@ -138,12 +155,64 @@ function setup() {
   //     the user can delete them manually when they're confident the migration is good.
   try { migrateLegacyDropdownSheets_(ss); } catch (e) { Logger.log("Migration skipped: " + e); }
 
-  const msg = "Setup complete. Sheets created this run: " + createdCount + ".";
+  let msg = "Setup complete.\n" +
+            "Sheets created this run: " + createdCount + "\n" +
+            "Header cells added to existing sheets: " + healedCols;
+  if (mismatches.length) {
+    msg += "\n\nHeader mismatches left UNTOUCHED (review/fix manually if these are drift, " +
+           "or ignore if they're intentional renames):\n- " + mismatches.join("\n- ");
+  }
   try {
     SpreadsheetApp.getUi().alert(msg);
   } catch (e) {
     Logger.log(msg); // No UI context (run from script editor / trigger) — log instead.
   }
+}
+
+// Bring an EXISTING sheet's header row up to the expected schema WITHOUT touching
+// data: widen the grid if needed, fill blank header cells, and add headers for
+// columns beyond the current width. A header cell that is already filled but
+// DIFFERENT from the expected text is left alone and recorded in `mismatches` —
+// we never clobber what might be a deliberate rename. Schema headers that are
+// intentionally blank (e.g. the approver-queue checkbox column) are skipped.
+// Returns the number of header cells written.
+function healSheetHeaders_(sheet, headers, sheetName, mismatches) {
+  // Ensure the sheet has at least as many columns as the schema needs.
+  const maxCols = sheet.getMaxColumns();
+  if (maxCols < headers.length) {
+    sheet.insertColumnsAfter(maxCols, headers.length - maxCols);
+  }
+
+  const current = sheet.getRange(1, 1, 1, headers.length).getValues()[0];
+  let written = 0;
+  for (let i = 0; i < headers.length; i++) {
+    const want = (headers[i] === null || headers[i] === undefined) ? "" : headers[i].toString().trim();
+    if (want === "") continue; // schema intentionally leaves this header blank
+
+    const have = (current[i] === null || current[i] === undefined) ? "" : current[i].toString().trim();
+    if (have === "") {
+      // Blank slot — a missing trailing column or an empty header cell. Fill it.
+      sheet.getRange(1, i + 1).setValue(headers[i]).setFontWeight("bold");
+      written++;
+    } else if (have.toLowerCase() !== want.toLowerCase()) {
+      // Filled but different — possible drift or a deliberate rename. Don't touch.
+      mismatches.push(sheetName + " col " + columnLetter_(i + 1) + ': has "' + have + '", expected "' + want + '"');
+    }
+  }
+  if (written > 0) sheet.setFrozenRows(1);
+  return written;
+}
+
+// Column number -> spreadsheet letter (1 -> "A", 27 -> "AA"). For readable
+// drift messages.
+function columnLetter_(col) {
+  let s = "";
+  while (col > 0) {
+    const m = (col - 1) % 26;
+    s = String.fromCharCode(65 + m) + s;
+    col = Math.floor((col - m) / 26);
+  }
+  return s;
 }
 
 // Copy rows from legacy "Bank Database" and "Expense Types" sheets into the new
