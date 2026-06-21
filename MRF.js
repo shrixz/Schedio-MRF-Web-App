@@ -17,9 +17,12 @@ const SHEETS = {
   PAYMENT_TERMS: "Payment Terms Database",
   EXPENSE_LOGS: "Expense Logs",
   EXPENSE_ACTIVITY: "Expense Activity Logs",
-  // Petty Cash module (ported from Finance Portal). Projects sheet rows are
-  // looked up by row index — i.e. row 2 = projectId 2 — so do not reorder it.
-  PETTY_CASH_PROJECTS:       "PettyCash Projects",
+  // Petty Cash module (ported from Finance Portal). The per-project fund now
+  // lives in the master "Project Database" sheet (no separate PettyCash Projects
+  // sheet) to avoid duplicating the project name across two sheets. Project rows
+  // are looked up by row index — i.e. row 2 = projectId 2 — so do not reorder it.
+  // The fund columns sit AFTER "Total Contract Price":
+  //   col I = Total Allocated Fund, col J = Total Expenses, col K = Remaining Balance.
   PETTY_CASH_EXPENSES:       "PettyCash Expenses",
   PETTY_CASH_REPLENISHMENTS: "PettyCash Replenishments",
   // Single sheet that backs every dropdown in the app. Columns:
@@ -2819,8 +2822,10 @@ function submitAccountingExpense(payload, fileObj) {
 
 // =============================================================================
 // --- PETTY CASH MODULE (ported from Finance Portal) ---
-// Self-contained block — does not modify any existing logic. Three sheets:
-//   PettyCash Projects        (row index used as projectId — do not reorder)
+// Self-contained block. The per-project fund lives in the master Project
+// Database sheet (no separate projects sheet); two dedicated log sheets remain:
+//   Project Database          (col A = name; I/J/K = Allocated / Expenses / Balance;
+//                              row index used as projectId — do not reorder)
 //   PettyCash Expenses        (one row per line item)
 //   PettyCash Replenishments  (Pending → Approved/Denied; or Direct = Approved on create)
 //
@@ -2830,6 +2835,13 @@ function submitAccountingExpense(payload, fileObj) {
 // =============================================================================
 
 const PETTY_CASH_LIMIT = 5000;  // Combined per-submission cap, in pesos.
+
+// Petty cash fund columns inside the "Project Database" sheet (1-based).
+// Project Title is col A (1); the fund block sits after "Total Contract Price" (H):
+//   I = Total Allocated Fund, J = Total Expenses, K = Remaining Balance.
+const PC_ALLOC_COL    = 9;   // I
+const PC_EXPENSES_COL = 10;  // J
+const PC_BALANCE_COL  = 11;  // K
 
 function isAccountingRole_(role) {
   const r = (role || "").toString().toLowerCase();
@@ -2887,10 +2899,14 @@ function pcReadRows_(sheet, startCol, numCols) {
   return sheet.getRange(2, startCol, n, numCols).getValues();
 }
 
-// Reads PettyCash Projects sheet and computes balance from PettyCash Expenses
-// live (formulas in the sheet are optional — backend is authoritative).
+// Reads the petty cash fund straight from the "Project Database" sheet — the
+// project name (col A) and Total Allocated Fund (col I) are the only stored
+// inputs. Total spent is computed live from the PettyCash Expenses ledger, and
+// the derived Total Expenses (col J) / Remaining Balance (col K) are written
+// back so the sheet always displays current values (the ledger stays the
+// authoritative source — sheet formulas are optional).
 function loadPettyCashProjects_() {
-  const pSheet = SS.getSheetByName(SHEETS.PETTY_CASH_PROJECTS);
+  const pSheet = SS.getSheetByName(SHEETS.PROJECTS);
   if (!pSheet) return [];
 
   // Map of projectName(lowercased) → total spent (bounded read).
@@ -2902,9 +2918,11 @@ function loadPettyCashProjects_() {
     if (key) spentMap[key] = (spentMap[key] || 0) + amt;
   });
 
-  return pcReadRows_(pSheet, 1, 2).map((r, idx) => {
+  // Read A..K so we get the name (A) and the allocated fund (I) in one pass.
+  const rows = pcReadRows_(pSheet, 1, PC_BALANCE_COL);
+  const projects = rows.map((r, idx) => {
     const name = (r[0] || "").toString().trim();
-    const allocated = Number(r[1]) || 0;
+    const allocated = Number(r[PC_ALLOC_COL - 1]) || 0;
     const spent = spentMap[name.toLowerCase()] || 0;
     return {
       id: idx + 2,             // row index in the sheet
@@ -2914,6 +2932,28 @@ function loadPettyCashProjects_() {
       balance: allocated - spent
     };
   }).filter(p => p.name);
+
+  // Keep the displayed Total Expenses (J) / Remaining Balance (K) in sync with
+  // what we just computed. Batched, and only written when something changed so
+  // we don't rewrite the columns on every read for no reason.
+  try {
+    if (rows.length) {
+      const haveJK = pSheet.getRange(2, PC_EXPENSES_COL, rows.length, 2).getValues();
+      const wantJK = rows.map((r, idx) => {
+        const name = (r[0] || "").toString().trim();
+        if (!name) return [haveJK[idx][0], haveJK[idx][1]]; // leave blank rows untouched
+        const allocated = Number(r[PC_ALLOC_COL - 1]) || 0;
+        const spent = spentMap[name.toLowerCase()] || 0;
+        return [spent, allocated - spent];
+      });
+      const changed = wantJK.some((w, i) =>
+        (Number(haveJK[i][0]) || 0) !== (Number(w[0]) || 0) ||
+        (Number(haveJK[i][1]) || 0) !== (Number(w[1]) || 0));
+      if (changed) pSheet.getRange(2, PC_EXPENSES_COL, rows.length, 2).setValues(wantJK);
+    }
+  } catch (e) { /* display-only sync — never fail the load over it */ }
+
+  return projects;
 }
 
 // Fast diagnostic — returns immediately without loading/serializing the data.
@@ -2929,10 +2969,9 @@ function pettyCashPing(userIdentifier) {
     out.role = emp ? emp.role : "";
   } catch (e) { out.lookupError = e.toString(); }
 
-  [["projects", SHEETS.PETTY_CASH_PROJECTS],
+  [["projectDb", SHEETS.PROJECTS],
    ["expenses", SHEETS.PETTY_CASH_EXPENSES],
    ["replenishments", SHEETS.PETTY_CASH_REPLENISHMENTS],
-   ["projectDb", SHEETS.PROJECTS],
    ["employees", SHEETS.EMPLOYEES]].forEach(pair => {
     try {
       const sh = SS.getSheetByName(pair[1]);
@@ -2996,11 +3035,10 @@ function getPettyCashData(userIdentifier) {
       });
     } catch (e) { diag.replenishmentsError = e.toString(); }
 
-    // The Direct Replenishment dropdown is sourced ONLY from the PettyCash
-    // Projects sheet (col A) — projects are mapped into that sheet manually,
-    // since it is the only place a running balance can be maintained. We no
-    // longer pull names from the master Project Database here (it was extra
-    // sheet-read latency on every load for a list the UI no longer uses).
+    // The Direct Replenishment dropdown is sourced from `allProjects` (built
+    // above from the master Project Database, col A). The running balance now
+    // lives in that same sheet (cols I/J/K), so there's no longer a separate
+    // list to merge in — this stays empty for backward compatibility.
     let allKnownProjectNames = [];
 
     return {
@@ -3114,16 +3152,15 @@ function submitPettyCashExpense(payload) {
       return { success: false, error: `Combined transactions over ₱${PETTY_CASH_LIMIT.toLocaleString()} are not permitted in Petty Cash.` };
     }
 
-    const pSheet = SS.getSheetByName(SHEETS.PETTY_CASH_PROJECTS);
-    if (!pSheet) return { success: false, error: "PettyCash Projects sheet missing — run setup()." };
+    const pSheet = SS.getSheetByName(SHEETS.PROJECTS);
+    if (!pSheet) return { success: false, error: "Project Database sheet missing — run setup()." };
 
     // Resolve project via row index — must exist.
     const projectId = Number(payload.projectId);
     if (!projectId || projectId < 2 || projectId > pSheet.getLastRow()) {
       return { success: false, error: "Invalid project." };
     }
-    const projectRow = pSheet.getRange(projectId, 1, 1, 2).getValues()[0];
-    const projectName = (projectRow[0] || "").toString().trim();
+    const projectName = (pSheet.getRange(projectId, 1).getValue() || "").toString().trim();
     if (!projectName) return { success: false, error: "Project not found." };
 
     // Compute current balance from authoritative source (sheet allocated − ledger total)
@@ -3219,9 +3256,9 @@ function requestPettyCashReplenishment(payload) {
 }
 
 // Accounting bypass — log a direct replenishment that's auto-approved.
-// Auto-creates a PettyCash Projects row if the chosen project doesn't have one yet,
-// so accounting can replenish any project from the master Project Database without
-// pre-seeding the petty cash sheet.
+// Bumps the "Total Allocated Fund" (col I) of the project's row in the master
+// Project Database. If the chosen project name isn't registered yet, a minimal
+// row is appended so accounting can still replenish it.
 function directPettyCashReplenish(payload) {
   const lock = LockService.getDocumentLock();
   try {
@@ -3239,8 +3276,8 @@ function directPettyCashReplenish(payload) {
       return { success: false, error: "Amount must be greater than zero." };
     }
 
-    const pSheet = SS.getSheetByName(SHEETS.PETTY_CASH_PROJECTS);
-    if (!pSheet) return { success: false, error: "PettyCash Projects sheet missing — run setup()." };
+    const pSheet = SS.getSheetByName(SHEETS.PROJECTS);
+    if (!pSheet) return { success: false, error: "Project Database sheet missing — run setup()." };
 
     // Resolve project row — by id if supplied, else by name (auto-create if absent).
     const wantedName = payload.projectName.toString().trim();
@@ -3254,15 +3291,15 @@ function directPettyCashReplenish(payload) {
       if (foundIdx !== -1) {
         projectId = foundIdx + 2;
       } else {
-        // Auto-create the project row with zero starting allocation; the
-        // replenishment we're about to log will bump it up below.
-        pSheet.appendRow([wantedName, 0, "", ""]);
+        // Project isn't registered yet — append a minimal row (name only); the
+        // replenishment we're about to log will set its allocation below.
+        pSheet.appendRow([wantedName]);
         projectId = pSheet.getLastRow();
       }
     }
 
-    const currentAlloc = Number(pSheet.getRange(projectId, 2).getValue()) || 0;
-    pSheet.getRange(projectId, 2).setValue(currentAlloc + cleanAmount);
+    const currentAlloc = Number(pSheet.getRange(projectId, PC_ALLOC_COL).getValue()) || 0;
+    pSheet.getRange(projectId, PC_ALLOC_COL).setValue(currentAlloc + cleanAmount);
 
     const reqId = "DIR-" + new Date().getTime().toString().slice(-6);
     const reqAmount = cleanAmount.toLocaleString('en-US', {minimumFractionDigits: 2});
@@ -3322,7 +3359,7 @@ function processBatchPettyCashReplenish(reqIds, action) {
     }
 
     const rSheet = SS.getSheetByName(SHEETS.PETTY_CASH_REPLENISHMENTS);
-    const pSheet = SS.getSheetByName(SHEETS.PETTY_CASH_PROJECTS);
+    const pSheet = SS.getSheetByName(SHEETS.PROJECTS);
     if (!rSheet || !pSheet) return { success: false, error: "Petty Cash sheets missing — run setup()." };
 
     const data = rSheet.getDataRange().getValues();
@@ -3344,9 +3381,21 @@ function processBatchPettyCashReplenish(reqIds, action) {
       let fileUrl = "-";
 
       if (action === 'Approved') {
-        if (projectId && projectId >= 2 && projectId <= pSheet.getLastRow()) {
-          const currentAlloc = Number(pSheet.getRange(projectId, 2).getValue()) || 0;
-          pSheet.getRange(projectId, 2).setValue(currentAlloc + rawAmount);
+        // Bump the project's Total Allocated Fund (col I) in the Project Database.
+        // Trust the stored row id when valid; otherwise fall back to a name lookup
+        // so requests filed before the sheet switch still resolve correctly.
+        let allocRow = (projectId && projectId >= 2 && projectId <= pSheet.getLastRow()) ? projectId : 0;
+        if (!allocRow && projectName) {
+          const wantedKey = projectName.toString().trim().toLowerCase();
+          const names = pSheet.getLastRow() >= 2
+            ? pSheet.getRange(2, 1, pSheet.getLastRow() - 1, 1).getValues()
+            : [];
+          const idx = names.findIndex(r => (r[0] || "").toString().trim().toLowerCase() === wantedKey);
+          if (idx !== -1) allocRow = idx + 2;
+        }
+        if (allocRow) {
+          const currentAlloc = Number(pSheet.getRange(allocRow, PC_ALLOC_COL).getValue()) || 0;
+          pSheet.getRange(allocRow, PC_ALLOC_COL).setValue(currentAlloc + rawAmount);
         }
 
         try {

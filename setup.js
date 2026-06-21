@@ -38,7 +38,12 @@ function setup() {
     // Project Database gained a "Total Contract Price" column when the BOQ Upload
     // Portal was integrated — the value is captured at upload time and used
     // downstream by Payments/Supplier-Payments tabs.
-    "Project Database":     ["Project Title", "Owner", "Address", "Date", "Bidder", "Source Link", "Date Uploaded", "Total Contract Price"],
+    // Cols I/J/K (Total Allocated Fund / Total Expenses / Remaining Balance) back
+    // the Petty Cash module: the fund now lives here instead of a separate
+    // "PettyCash Projects" sheet, so the project name isn't duplicated. Allocated
+    // (I) is the stored input (bumped by replenishments); Expenses (J) and Balance
+    // (K) are written back by loadPettyCashProjects_ from the PettyCash Expenses ledger.
+    "Project Database":     ["Project Title", "Owner", "Address", "Date", "Bidder", "Source Link", "Date Uploaded", "Total Contract Price", "Total Allocated Fund", "Total Expenses", "Remaining Balance"],
     "Employee Database":    ["Name", "Email", "Position", "Assigned Projects", "Password", "Salt"],
     "Supplier Database":    ["Company Name", "Nature of Company", "Email", "Viber Number", "Contact Person"],
 
@@ -65,11 +70,12 @@ function setup() {
     "Expense Activity Logs":["Timestamp", "Expense ID", "Action", "Performed By", "Old Status", "New Status", "Notes"],
 
     // --- Petty Cash module sheets (ported from Finance Portal) ---
-    //   PettyCash Projects     = per-project petty cash fund (allocated / spent / balance).
+    //   The per-project fund now lives in the "Project Database" sheet (cols I/J/K
+    //   above) — there is no separate "PettyCash Projects" sheet anymore, so the
+    //   project name isn't duplicated across two sheets.
     //   PettyCash Expenses     = individual petty cash spends; cap of ₱5,000 per submission enforced server-side.
     //   PettyCash Replenishments = requests from employees (Pending → Approved/Denied)
     //                              and direct logs from Accounting (Approved on create).
-    "PettyCash Projects":        ["Project / Office", "Total Allocated Fund", "Total Expenses", "Remaining Balance"],
     "PettyCash Expenses":        ["Timestamp", "Doc Ref", "User", "Project", "Line Item", "Amount", "Balance After", "Receipt URL"],
     "PettyCash Replenishments":  ["Timestamp", "Req ID", "Requestor Name", "Requestor Email", "Project ID", "Project Name", "Amount", "Status", "Receipt URL"],
 
