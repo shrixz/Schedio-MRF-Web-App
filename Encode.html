@@ -279,6 +279,18 @@
   function showLoader() { document.getElementById('loader').style.display = 'flex'; }
   function hideLoader() { document.getElementById('loader').style.display = 'none'; }
 
+  // HTML-escape user/sheet-controlled strings before template-literal injection.
+  function escAttr(v) {
+    if (v === null || v === undefined) return '';
+    return v.toString()
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+  function escHtml(v) { return escAttr(v); }
+
   let globalGroupsData = [];
   let validSuppliers = [];
 
@@ -304,25 +316,33 @@
       let htmlString = "";
       groups.forEach(g => {
         htmlString += `
-          <div class="batch-card" data-date="${g.date}" id="batch-card-${g.id}">
-            <div class="batch-header" onclick="toggleDetails('${g.id}')">
+          <div class="batch-card" data-date="${escAttr(g.date)}" id="batch-card-${escAttr(g.id)}">
+            <div class="batch-header enc-toggle" data-id="${escAttr(g.id)}">
               <div class="b-meta">
-                <span class="b-date">${g.date}</span>
-                <span class="b-id">${g.id}</span>
-                <span class="b-project">${g.project}</span>
+                <span class="b-date">${escHtml(g.date)}</span>
+                <span class="b-id">${escHtml(g.id)}</span>
+                <span class="b-project">${escHtml(g.project)}</span>
               </div>
-              <div class="b-req">REQ: ${g.requestor} <i class="bi bi-chevron-down ms-2"></i></div>
+              <div class="b-req">REQ: ${escHtml(g.requestor)} <i class="bi bi-chevron-down ms-2"></i></div>
             </div>
-            <div id="details-${g.id}" class="mrf-details-container">
-              <div id="suppliers-container-${g.id}"></div>
+            <div id="details-${escAttr(g.id)}" class="mrf-details-container">
+              <div id="suppliers-container-${escAttr(g.id)}"></div>
             </div>
-            <div id="footer-${g.id}" class="submit-bar" style="display:none;">
-              <button class="btn-ink" onclick="submitEncoding('${g.id}')"><i class="bi bi-send"></i> Submit All Encodings</button>
+            <div id="footer-${escAttr(g.id)}" class="submit-bar" style="display:none;">
+              <button class="btn-ink enc-submit" data-id="${escAttr(g.id)}"><i class="bi bi-send"></i> Submit All Encodings</button>
             </div>
           </div>`;
       });
 
       body.innerHTML = htmlString;
+      // Delegated handlers — keep MRF ids and user-controlled values out of
+      // inline onclick attributes.
+      document.querySelectorAll('#encodeQueueBody .enc-toggle').forEach(el => {
+        el.addEventListener('click', () => toggleDetails(el.dataset.id));
+      });
+      document.querySelectorAll('#encodeQueueBody .enc-submit').forEach(btn => {
+        btn.addEventListener('click', () => submitEncoding(btn.dataset.id));
+      });
       groups.forEach(g => addSupplierBlock(g.id));
 
       hideLoader();
@@ -669,7 +689,6 @@
                     <label class="lbl">Supplier Name <span class="text-danger">*</span></label>
                     <select class="form-select supplier-name-input">
                         <option value="">-- Select Supplier --</option>
-                        <option value="test">Test Supplier</option>
                         ${supplierOptions}
                     </select>
                 </div>
@@ -685,13 +704,9 @@
                 </div>
             </div>
 
-            <div class="shared-terms-section">
-                <label class="lbl"><i class="bi bi-calendar-check"></i> Payment Schedule — Shared Across All Items</label>
-                <div id="shared-terms-${supplierId}" class="shared-terms-container mt-1"></div>
-                ${pctBarHtml()}
-                <button type="button" class="add-term-btn mt-1" onclick="addSharedPaymentTerm('${supplierId}')">+ Add Term</button>
-            </div>
-
+            <!-- STEP 1: Encoder enters Qty / Unit / Unit Price first. The shared
+                 Payment Schedule below depends on the per-supplier subtotal, so
+                 prices must be entered before the term amounts make sense. -->
             <div class="table-responsive">
               <table class="items-table">
                 <thead><tr>
@@ -710,6 +725,15 @@
                   </tr>
                 </tfoot>
               </table>
+            </div>
+
+            <!-- STEP 2: Payment schedule (Per Supplier mode). Amounts here are
+                 auto-derived from the % × grand total above. -->
+            <div class="shared-terms-section mt-3">
+                <label class="lbl"><i class="bi bi-calendar-check"></i> Payment Schedule — Shared Across All Items</label>
+                <div id="shared-terms-${supplierId}" class="shared-terms-container mt-1"></div>
+                ${pctBarHtml()}
+                <button type="button" class="add-term-btn mt-1" onclick="addSharedPaymentTerm('${supplierId}')">+ Add Term</button>
             </div>
         </div>
      `;
@@ -745,7 +769,7 @@
         const priceRaw = row.querySelector('.price-input').value.replace(/,/g, '');
         const price = parseFloat(priceRaw) || 0;
 
-        const subtotal = isBudget ? price : (qty * price);
+        const subtotal = qty * price;
         grandTotal += subtotal;
 
         row.dataset.subtotal = subtotal;
@@ -957,8 +981,24 @@
     document.getElementById('loader').style.display = 'flex';
     google.script.run.withSuccessHandler((res) => {
       document.getElementById('loader').style.display = 'none';
-      if(res.indexOf("Error") > -1) { Swal.fire('Warning', res, 'warning'); }
-      else { Swal.fire('Success', 'Encoding Submitted', 'success').then(loadEncodeQueue); }
+      if (res.indexOf("Error") > -1) {
+        Swal.fire('Warning', res, 'warning');
+        return;
+      }
+      // The backend may append "Supplier email notes:" with one bullet per
+      // supplier whose email lookup failed. If present, show a warning so the
+      // encoder knows the data was saved but one or more suppliers were not
+      // notified — most often a missing email in Supplier Database col C.
+      const hasNotes = res.indexOf("Supplier email notes:") > -1;
+      if (hasNotes) {
+        Swal.fire({
+          icon: 'warning',
+          title: 'Encoding Submitted (with email warnings)',
+          html: res.replace(/\n/g, '<br>'),
+        }).then(loadEncodeQueue);
+      } else {
+        Swal.fire('Success', 'Encoding Submitted — supplier(s) emailed with PO.', 'success').then(loadEncodeQueue);
+      }
     }).processEncoding(payloadUpdates);
   }
 </script>

@@ -38,12 +38,23 @@ function setup() {
     // Project Database gained a "Total Contract Price" column when the BOQ Upload
     // Portal was integrated — the value is captured at upload time and used
     // downstream by Payments/Supplier-Payments tabs.
-    // Cols I/J/K (Total Allocated Fund / Total Expenses / Remaining Balance) back
-    // the Petty Cash module: the fund now lives here instead of a separate
-    // "PettyCash Projects" sheet, so the project name isn't duplicated. Allocated
-    // (I) is the stored input (bumped by replenishments); Expenses (J) and Balance
-    // (K) are written back by loadPettyCashProjects_ from the PettyCash Expenses ledger.
-    "Project Database":     ["Project Title", "Owner", "Address", "Date", "Bidder", "Source Link", "Date Uploaded", "Total Contract Price", "Total Allocated Fund", "Total Expenses", "Remaining Balance"],
+    //
+    // Col I holds the per-project petty cash fund. The Petty Cash module reads
+    // from here (loadPettyCashProjects_ in MRF.js) — there is no separate
+    // "PettyCash Projects" sheet anymore.
+    //
+    // To enable petty cash for a project, fill col I "Petty Cash Allocated" with
+    // the peso amount (e.g. 50000). Blank = project is NOT enabled for petty cash.
+    //
+    // Spent and remaining balance are NOT stored in the sheet — they're computed
+    // live from the PettyCash Expenses ledger every time petty cash data is loaded,
+    // and shown to the user only in the app UI (Petty Cash → Balances tab). This
+    // keeps the math single-sourced: nothing on the sheet can be edited in a way
+    // that desynchronizes from the ledger.
+    //
+    // Row index in Project Database = projectId — do not reorder existing rows
+    // or balances/expenses tied to those rows will drift.
+    "Project Database":     ["Project Title", "Owner", "Address", "Date", "Bidder", "Source Link", "Date Uploaded", "Total Contract Price", "Petty Cash Allocated"],
     "Employee Database":    ["Name", "Email", "Position", "Assigned Projects", "Password", "Salt"],
     "Supplier Database":    ["Company Name", "Nature of Company", "Email", "Viber Number", "Contact Person"],
 
@@ -61,7 +72,7 @@ function setup() {
     "Inventory Logs":       ["Date", "Project Title", "Phase", "Item Name", "Scope", "Sub Scope", "Sub-Sub Scope", "Qty Out", "Unit"],
     "Supplier Price-in":    ["Timestamp", "MRF Number", "Item Name", "Supplier", "Price", "Encoded By", "Payment Terms", "Payment Date"],
     "PO Generation Queue":  ["Timestamp", "MRF Number", "Project Code", "Requestor", "Phase", "Item Name", "Approved Qty", "Unit", "Remarks", "Supplier", "Price", "Payment Terms", "Payment Date"],
-    "Accounting Queue":     ["Timestamp", "MRF Number", "Project", "Supplier", "PO Document Link", "Status"],
+    "Accounting Queue":     ["Timestamp", "MRF Number", "Project", "Supplier", "PO Document Link", "Status", "Deposit Slip Link", "Deposited By", "Deposit Timestamp"],
     "Receiving Logs":       ["Timestamp", "MRF ID", "Item Name", "Received Qty", "Remarks"],
     "BOQ Logs":             ["Timestamp", "Added By", "Action", "Project", "Phase", "Scope", "Sub Scope", "Sub-Sub Scope", "Item Description", "Unit", "Qty", "Mat Cost", "Lab Cost", "Reason"],
     "Justification Logs":   ["Timestamp", "MRF ID", "Project", "Requestor", "Approver Email", "Item Name", "Question / Note", "Requestor Reply", "Status"],
@@ -69,11 +80,28 @@ function setup() {
     "Expense Logs":         ["Timestamp", "Expense ID", "Category", "Project Name", "Company Name", "Expense Type", "Description", "Amount", "Status", "Submitted By", "Submitter Email", "Notes", "Paid By", "Paid Date", "Payment Method", "Receipt Link"],
     "Expense Activity Logs":["Timestamp", "Expense ID", "Action", "Performed By", "Old Status", "New Status", "Notes"],
 
+    // Client Payments (collections / accounts receivable) — money received FROM
+    // clients, recorded against a project's Total Contract Price and its milestone
+    // schedule (Payment Terms Database). One row per payment received.
+    //   - "Milestone Row" points at the Payment Terms Database sheet row this
+    //     payment settles (blank = a general/unassigned payment).
+    //   - "Amount Due" is a snapshot of Payment % × TCP at recording time, editable
+    //     by the user, so it never silently drifts if milestones change later.
+    //   - "Status" holds "Active" or "Voided". Voids are kept (never deleted) so
+    //     the ledger stays auditable.
+    "Client Payments":      ["Timestamp", "Payment ID", "Project Title", "Milestone Row", "Milestone", "Billing Ref", "Amount Due", "Amount Received", "Date Received", "Payment Method", "Bank Name", "Deposited-To Account", "Check Number", "Check Date", "Reference No", "OR Number", "Received By", "Remarks", "Status"],
+    // Audit trail for Client Payments: every milestone edit (with before/after
+    // value) and every payment void is appended here. Append-only.
+    "Client Payment Logs":  ["Timestamp", "Entity", "Reference", "Action", "Field", "Old Value", "New Value", "Performed By", "Notes"],
+
     // --- Petty Cash module sheets (ported from Finance Portal) ---
-    //   The per-project fund now lives in the "Project Database" sheet (cols I/J/K
-    //   above) — there is no separate "PettyCash Projects" sheet anymore, so the
-    //   project name isn't duplicated across two sheets.
-    //   PettyCash Expenses     = individual petty cash spends; cap of ₱5,000 per submission enforced server-side.
+    //   Per-project petty cash funds (allocated / spent / balance) now live in
+    //   "Project Database" cols I/J/K — see the comment on that schema above.
+    //   The legacy "PettyCash Projects" sheet is no longer used; setup() will not
+    //   create or heal it. If you have one in an existing workbook it is harmless
+    //   to leave in place (it's simply orphaned) or to delete manually.
+    //
+    //   PettyCash Expenses       = individual petty cash spends; cap of ₱5,000 per submission enforced server-side.
     //   PettyCash Replenishments = requests from employees (Pending → Approved/Denied)
     //                              and direct logs from Accounting (Approved on create).
     "PettyCash Expenses":        ["Timestamp", "Doc Ref", "User", "Project", "Line Item", "Amount", "Balance After", "Receipt URL"],

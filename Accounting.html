@@ -170,6 +170,7 @@
       <div class="sb-section">Workspace</div>
       <a id="nav-slips" class="sb-item active" onclick="showSection('slips')"><i class="bi bi-receipt"></i> PO &amp; Deposit Slips</a>
       <a id="nav-supplier-payments" class="sb-item" onclick="showSection('supplier-payments'); loadSupplierPayments();"><i class="bi bi-bank"></i> Supplier Payments</a>
+      <a id="nav-client-payments" class="sb-item" onclick="showSection('client-payments'); loadClientPayments();"><i class="bi bi-cash-coin"></i> Client Payments</a>
       <a id="nav-boq-upload" class="sb-item" onclick="showSection('boq-upload');"><i class="bi bi-cloud-upload"></i> BOQ Upload</a>
       <a id="nav-boq-adjust" class="sb-item" onclick="showSection('boq-adjust'); loadBoqAdjustProjects();"><i class="bi bi-pencil-square"></i> BOQ Adjustments</a>
       <a id="nav-expenses" class="sb-item" onclick="showSection('expenses'); loadExpenses();"><i class="bi bi-cash-stack"></i> Expense Tracking</a>
@@ -260,6 +261,15 @@
     <!-- =========================== BOQ UPLOAD =========================== -->
     <div id="section-boq-upload" class="content-section container">
       <h2 class="mb-4 text-dark fw-bold">BOQ Upload</h2>
+
+      <!-- Sub-tabs inside BOQ Upload — segmented style, matches Petty Cash -->
+      <div class="segmented" id="boq-subtabs" role="tablist">
+        <a id="boq-tab-upload" class="active" href="#" onclick="boqSwitchTab('upload'); return false;">Upload New BOQ</a>
+        <a id="boq-tab-edit" href="#" onclick="boqSwitchTab('edit'); boqEditLoadProjects(); return false;">Edit Project &amp; Milestones</a>
+      </div>
+
+      <!-- PANE: Upload New BOQ (existing flow, unchanged) -->
+      <div id="boq-pane-upload" class="boq-pane">
       <p class="text-muted small mb-4">Upload a BOQ workbook, declare the project Total Contract Price, and break down the client payment terms. The system parses every non-SUMMARY tab and writes line items into the BOQ Database for this spreadsheet.</p>
 
       <div class="row g-4">
@@ -307,6 +317,74 @@
           </div>
         </div>
       </div>
+      </div><!-- /#boq-pane-upload -->
+
+      <!-- PANE: Edit Project & Milestones (new) -->
+      <div id="boq-pane-edit" class="boq-pane" style="display:none;">
+        <p class="text-muted small mb-4">Edit a project already in the database and manage its milestones. Every change to a project's details or to a milestone is logged with <strong>before &amp; after</strong> values in the Client Payment Logs.</p>
+
+        <div class="row g-2 align-items-end mb-4">
+          <div class="col-md-6">
+            <label class="form-label fw-bold small text-muted">Select Project</label>
+            <select id="boqEditProjectSelect" class="form-select border-dark" onchange="boqEditLoadProject()">
+              <option value="">— Select Project —</option>
+            </select>
+          </div>
+          <div class="col-md-3">
+            <button class="btn btn-outline-dark fw-bold" onclick="boqEditLoadProjects(true)" title="Refresh project list"><i class="bi bi-arrow-clockwise"></i> Refresh</button>
+          </div>
+        </div>
+
+        <div id="boqEditWorkspace" style="display:none;">
+          <div class="row g-4">
+            <!-- Project details -->
+            <div class="col-lg-6">
+              <div class="batch-card">
+                <div class="batch-header"><span><i class="bi bi-building me-2"></i> Project Details</span></div>
+                <div class="batch-body">
+                  <label class="form-label fw-bold small text-muted">Project Title <span class="text-muted">(locked — it links all records)</span></label>
+                  <input type="text" id="boqEditTitle" class="form-control mb-3" readonly style="background:#f1f3f5;">
+                  <label class="form-label fw-bold small text-muted">Owner</label>
+                  <input type="text" id="boqEditOwner" class="form-control border-dark mb-3">
+                  <label class="form-label fw-bold small text-muted">Address</label>
+                  <input type="text" id="boqEditAddress" class="form-control border-dark mb-3">
+                  <label class="form-label fw-bold small text-muted">Bidder</label>
+                  <input type="text" id="boqEditBidder" class="form-control border-dark mb-3">
+                  <label class="form-label fw-bold small text-muted">Total Contract Price (TCP)</label>
+                  <div class="input-group mb-3">
+                    <span class="input-group-text fw-bold">₱</span>
+                    <input type="text" id="boqEditTcp" class="form-control border-dark fw-bold" oninput="boqFormatTcp(this)">
+                  </div>
+                  <button class="btn btn-dark w-100 fw-bold" id="boqSaveProjectBtn" onclick="boqSaveProject()"><i class="bi bi-save me-1"></i> Save Project Changes</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Milestones -->
+            <div class="col-lg-6">
+              <div class="batch-card">
+                <div class="batch-header"><span><i class="bi bi-list-ol me-2"></i> Milestones</span></div>
+                <div class="batch-body">
+                  <div class="table-responsive mb-3">
+                    <table class="table table-sm align-middle mb-0" style="font-size:0.85rem;">
+                      <thead class="table-light text-muted" style="font-size:0.72rem;text-transform:uppercase;">
+                        <tr><th>#</th><th>Milestone %</th><th>Payment %</th><th class="text-center">Save</th></tr>
+                      </thead>
+                      <tbody id="boqMilestoneBody"><tr><td colspan="4" class="text-center text-muted py-3">Select a project.</td></tr></tbody>
+                    </table>
+                  </div>
+                  <hr>
+                  <h6 class="fw-bold small text-muted mb-2">ADD NEW MILESTONE(S)</h6>
+                  <p class="small text-muted mb-2">For projects with no milestones yet — or to extend an existing schedule.</p>
+                  <div id="boqNewMilestoneContainer"></div>
+                  <button class="btn btn-outline-dark btn-sm fw-bold mt-2 me-1" onclick="boqAddNewMilestoneRow()"><i class="bi bi-plus-lg"></i> Add Row</button>
+                  <button class="btn btn-success btn-sm fw-bold mt-2" id="boqSaveMilestonesBtn" onclick="boqSubmitNewMilestones()"><i class="bi bi-check-lg me-1"></i> Save New Milestones</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div><!-- /#boq-pane-edit -->
     </div>
     <!-- =========================== END BOQ UPLOAD =========================== -->
 
@@ -656,7 +734,235 @@
         </div>
     </div>
     <!-- ========================= END PETTY CASH (Accounting) ========================= -->
+
+    <!-- =========================== CLIENT PAYMENTS =========================== -->
+    <div id="section-client-payments" class="content-section container">
+      <h2 class="mb-2 text-dark fw-bold">Client Payments</h2>
+      <p class="text-muted small mb-4">Record payments received <strong>from clients</strong> against each project's contract price and milestone schedule. Amount due per milestone is computed as <strong>Payment % &times; Total Contract Price</strong>; milestones can be edited here and every edit is logged with before/after values.</p>
+
+      <!-- Roll-up summary across all projects -->
+      <div class="row g-3 mb-4">
+        <div class="col-md-4">
+          <div class="batch-card h-100"><div class="batch-body">
+            <div class="small text-uppercase text-muted fw-bold">Total Contract Value</div>
+            <div class="fs-4 fw-bold">&#8369;<span id="cpTotalContract">0.00</span></div>
+          </div></div>
+        </div>
+        <div class="col-md-4">
+          <div class="batch-card h-100"><div class="batch-body">
+            <div class="small text-uppercase text-muted fw-bold">Total Collected</div>
+            <div class="fs-4 fw-bold text-success">&#8369;<span id="cpTotalCollected">0.00</span></div>
+          </div></div>
+        </div>
+        <div class="col-md-4">
+          <div class="batch-card h-100"><div class="batch-body">
+            <div class="small text-uppercase text-muted fw-bold">Total Outstanding</div>
+            <div class="fs-4 fw-bold text-danger">&#8369;<span id="cpTotalOutstanding">0.00</span></div>
+          </div></div>
+        </div>
+      </div>
+
+      <!-- Project selector -->
+      <div class="row g-2 align-items-end mb-3">
+        <div class="col-md-5">
+          <label class="form-label fw-bold small text-muted">Project</label>
+          <select id="cpProjectSelect" class="form-select border-dark" onchange="loadClientPaymentProject()">
+            <option value="">-- Select Project --</option>
+          </select>
+        </div>
+        <div class="col-md-4">
+          <label class="form-label fw-bold small text-muted">Total Contract Price</label>
+          <div class="form-control border-dark bg-light fw-bold">&#8369;<span id="cpProjectTcp">0.00</span></div>
+        </div>
+        <div class="col-md-3 text-end">
+          <button class="btn btn-outline-dark fw-bold me-1" onclick="loadClientPayments()" title="Refresh"><i class="bi bi-arrow-clockwise"></i></button>
+          <button class="btn btn-dark fw-bold" id="cpRecordBtn" onclick="openRecordPayment('', '', '')" disabled><i class="bi bi-plus-lg"></i> Record Payment</button>
+        </div>
+      </div>
+
+      <!-- Milestone breakdown -->
+      <div class="batch-card mb-4">
+        <div class="batch-body">
+          <h5 class="fw-bold border-bottom pb-2 mb-3"><i class="bi bi-flag me-2"></i> Milestone Schedule</h5>
+          <div class="table-responsive">
+            <table class="table table-sm table-hover align-middle mb-0" style="font-size:0.85rem;">
+              <thead class="table-dark" style="font-size:0.75rem;text-transform:uppercase;">
+                <tr>
+                  <th>Milestone</th>
+                  <th class="text-center">Milestone %</th>
+                  <th class="text-center">Payment %</th>
+                  <th class="text-end">Amount Due</th>
+                  <th class="text-end">Collected</th>
+                  <th class="text-end">Balance</th>
+                  <th class="text-center">Status</th>
+                  <th class="text-center">Action</th>
+                </tr>
+              </thead>
+              <tbody id="cpMilestonesBody">
+                <tr><td colspan="8" class="text-center text-muted py-3">Select a project to view its milestones.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- Payment history -->
+      <div class="batch-card mb-4">
+        <div class="batch-body">
+          <h5 class="fw-bold border-bottom pb-2 mb-3"><i class="bi bi-list-ul me-2"></i> Payment History</h5>
+          <div class="table-responsive">
+            <table class="table table-sm table-bordered align-middle mb-0" style="font-size:0.82rem;">
+              <thead class="table-dark" style="font-size:0.72rem;text-transform:uppercase;">
+                <tr>
+                  <th>Payment ID</th>
+                  <th>Date Received</th>
+                  <th>Milestone</th>
+                  <th>Billing Ref</th>
+                  <th class="text-end">Received</th>
+                  <th>Method</th>
+                  <th>Bank / Ref</th>
+                  <th>OR #</th>
+                  <th>Received By</th>
+                  <th class="text-center">Status</th>
+                  <th class="text-center">Action</th>
+                </tr>
+              </thead>
+              <tbody id="cpPaymentsBody">
+                <tr><td colspan="11" class="text-center text-muted py-3">Select a project to view its payments.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- Activity log (audit trail) -->
+      <div class="batch-card mb-4">
+        <div class="batch-body">
+          <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-3">
+            <h5 class="fw-bold mb-0"><i class="bi bi-clock-history me-2"></i> Activity Log</h5>
+            <button class="btn btn-sm btn-outline-dark" id="cpAuditToggle" onclick="toggleClientAuditLog()">Show</button>
+          </div>
+          <div id="cpAuditWrap" style="display:none;">
+            <div class="table-responsive">
+              <table class="table table-sm align-middle mb-0" style="font-size:0.8rem;">
+                <thead class="table-light"><tr><th>Timestamp</th><th>Entity</th><th>Reference</th><th>Action</th><th>Field</th><th>Old</th><th>New</th><th>By</th><th>Notes</th></tr></thead>
+                <tbody id="cpAuditBody"><tr><td colspan="9" class="text-center text-muted py-3">No activity yet.</td></tr></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <!-- ========================= END CLIENT PAYMENTS ========================= -->
   </main>
+</div>
+
+<!-- =========================== CLIENT PAYMENTS — Record Payment modal =========================== -->
+<div class="modal fade" id="cpRecordModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered modal-lg">
+    <div class="modal-content border-dark">
+      <div class="modal-header bg-dark text-white">
+        <h5 class="modal-title fw-bold"><i class="bi bi-cash-coin me-2"></i> Record Client Payment</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="cpPayMilestoneRow">
+        <input type="hidden" id="cpPayMilestoneLabel">
+        <div class="row g-3">
+          <div class="col-md-6">
+            <label class="form-label fw-bold small text-muted">Project</label>
+            <div class="form-control border-dark bg-light fw-bold" id="cpPayProjectLabel">&mdash;</div>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label fw-bold small text-muted">Milestone</label>
+            <div class="form-control border-dark bg-light fw-bold" id="cpPayMilestoneText">General Payment</div>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label fw-bold small text-muted">Billing / Invoice Ref</label>
+            <input type="text" id="cpPayBillingRef" class="form-control border-dark" placeholder="e.g. SOA-2026-001">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label fw-bold small text-muted">Amount Due (&#8369;)</label>
+            <input type="text" id="cpPayAmountDue" class="form-control border-dark" placeholder="0.00" oninput="formatCurrencyInput(this)">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label fw-bold small text-muted">Amount Received (&#8369;) <span class="text-danger">*</span></label>
+            <input type="text" id="cpPayAmountReceived" class="form-control border-dark" placeholder="0.00" oninput="formatCurrencyInput(this)">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label fw-bold small text-muted">Date Received <span class="text-danger">*</span></label>
+            <input type="date" id="cpPayDateReceived" class="form-control border-dark">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label fw-bold small text-muted">Payment Method <span class="text-danger">*</span></label>
+            <select id="cpPayMethod" class="form-select border-dark"><option value="">-- Select --</option></select>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label fw-bold small text-muted">Bank Name</label>
+            <select id="cpPayBank" class="form-select border-dark"><option value="">-- None --</option></select>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label fw-bold small text-muted">Deposited-To Account</label>
+            <input type="text" id="cpPayDepositedTo" class="form-control border-dark" placeholder="Your company account (name / last 4 digits)">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label fw-bold small text-muted">Official Receipt (OR) No.</label>
+            <input type="text" id="cpPayOrNumber" class="form-control border-dark" placeholder="OR number issued">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label fw-bold small text-muted">Check Number</label>
+            <input type="text" id="cpPayCheckNumber" class="form-control border-dark" placeholder="For check payments">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label fw-bold small text-muted">Check Date</label>
+            <input type="date" id="cpPayCheckDate" class="form-control border-dark">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label fw-bold small text-muted">Reference / Txn No.</label>
+            <input type="text" id="cpPayReferenceNo" class="form-control border-dark" placeholder="Transfer / online ref">
+          </div>
+          <div class="col-md-12">
+            <label class="form-label fw-bold small text-muted">Remarks</label>
+            <textarea id="cpPayRemarks" class="form-control border-dark" rows="2" placeholder="Optional notes"></textarea>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-dark fw-bold" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-dark fw-bold" id="cpPaySubmitBtn" onclick="submitClientPayment()">Save Payment</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- =========================== CLIENT PAYMENTS — Edit Milestone modal =========================== -->
+<div class="modal fade" id="cpMilestoneModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content border-dark">
+      <div class="modal-header bg-dark text-white">
+        <h5 class="modal-title fw-bold"><i class="bi bi-pencil-square me-2"></i> Edit Milestone</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="cpEditMilestoneRow">
+        <p class="small text-muted">Saving writes back to this project's Payment Terms and is logged with the before/after values and your name.</p>
+        <div class="row g-3">
+          <div class="col-6">
+            <label class="form-label fw-bold small text-muted">Milestone %</label>
+            <input type="number" id="cpEditMilestonePct" class="form-control border-dark" min="0" max="100" placeholder="e.g. 20">
+          </div>
+          <div class="col-6">
+            <label class="form-label fw-bold small text-muted">Payment %</label>
+            <input type="number" id="cpEditPaymentPct" class="form-control border-dark" min="0" max="100" placeholder="e.g. 40">
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-dark fw-bold" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-dark fw-bold" id="cpEditMilestoneBtn" onclick="submitEditMilestone()">Save Changes</button>
+      </div>
+    </div>
+  </div>
 </div>
 
 <div class="modal fade" id="adjustBoqModal" tabindex="-1" aria-hidden="true">
@@ -856,6 +1162,173 @@
     if (document.getElementById('boqPaymentTermsContainer')) boqAddTermRow();
   });
 
+  // ============================================================
+  // BOQ Upload sub-tabs + Project/Milestone editor
+  // (additive — reuses getProjectList / getProjectEditData /
+  //  updateProjectDetails / updateClientMilestone / addProjectMilestones)
+  // ============================================================
+  function boqSwitchTab(tab) {
+    ['upload', 'edit'].forEach(t => {
+      const tabEl = document.getElementById('boq-tab-' + t);
+      const paneEl = document.getElementById('boq-pane-' + t);
+      if (tabEl) tabEl.classList.remove('active');
+      if (paneEl) paneEl.style.display = 'none';
+    });
+    const at = document.getElementById('boq-tab-' + tab);
+    const ap = document.getElementById('boq-pane-' + tab);
+    if (at) at.classList.add('active');
+    if (ap) ap.style.display = 'block';
+  }
+
+  function boqEditNumberWithCommas(n) {
+    const num = parseFloat(n) || 0;
+    return num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+
+  function boqEditCurrentUser() {
+    return (typeof currentUserName !== 'undefined' && currentUserName) ? currentUserName : '';
+  }
+
+  function boqEditLoadProjects(force) {
+    const sel = document.getElementById('boqEditProjectSelect');
+    if (!sel) return;
+    if (!force && sel.options.length > 1) return;
+    showLoader();
+    google.script.run.withSuccessHandler(projects => {
+      const cur = sel.value;
+      sel.innerHTML = '<option value="">— Select Project —</option>';
+      (projects || []).forEach(p => sel.add(new Option(p, p)));
+      if (cur) sel.value = cur;
+      hideLoader();
+    }).withFailureHandler(() => { hideLoader(); }).getProjectList();
+  }
+
+  function boqEditLoadProject() {
+    const proj = document.getElementById('boqEditProjectSelect').value;
+    const ws = document.getElementById('boqEditWorkspace');
+    if (!proj) { ws.style.display = 'none'; return; }
+    showLoader();
+    google.script.run.withSuccessHandler(res => {
+      hideLoader();
+      res = res || {};
+      if (!res.found) { ws.style.display = 'none'; Swal.fire('Not Found', 'That project is not in the Project Database.', 'warning'); return; }
+      document.getElementById('boqEditTitle').value = res.project || '';
+      document.getElementById('boqEditOwner').value = res.owner || '';
+      document.getElementById('boqEditAddress').value = res.address || '';
+      document.getElementById('boqEditBidder').value = res.bidder || '';
+      document.getElementById('boqEditTcp').value = boqEditNumberWithCommas(res.tcp || 0);
+      boqRenderMilestones(res.milestones || []);
+      document.getElementById('boqNewMilestoneContainer').innerHTML = '';
+      ws.style.display = 'block';
+    }).withFailureHandler(err => {
+      hideLoader();
+      Swal.fire('Error', (err && err.message) ? err.message : 'Failed to load project.', 'error');
+    }).getProjectEditData(proj);
+  }
+
+  function boqRenderMilestones(milestones) {
+    const body = document.getElementById('boqMilestoneBody');
+    if (!milestones.length) {
+      body.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-3">No milestones yet — add them below.</td></tr>';
+      return;
+    }
+    body.innerHTML = milestones.map(m => `<tr>
+      <td class="fw-bold">${m.index}</td>
+      <td><input type="number" min="0" step="0.01" class="form-control form-control-sm border-dark" id="boqMsM_${m.row}" value="${m.milestonePct}"></td>
+      <td><input type="number" min="0" step="0.01" class="form-control form-control-sm border-dark" id="boqMsP_${m.row}" value="${m.paymentPct}"></td>
+      <td class="text-center"><button class="btn btn-sm btn-dark fw-bold" onclick="boqUpdateMilestone(${m.row})" title="Save changes to this milestone"><i class="bi bi-save"></i></button></td>
+    </tr>`).join('');
+  }
+
+  function boqUpdateMilestone(row) {
+    const m = document.getElementById('boqMsM_' + row).value;
+    const p = document.getElementById('boqMsP_' + row).value;
+    showLoader();
+    google.script.run.withSuccessHandler(res => {
+      hideLoader();
+      if (res && res.success) {
+        Swal.fire({ icon: 'success', title: 'Milestone updated', timer: 1200, showConfirmButton: false });
+      } else {
+        Swal.fire('Error', (res && res.error) ? res.error : 'Update failed.', 'error');
+      }
+    }).withFailureHandler(err => {
+      hideLoader();
+      Swal.fire('Error', (err && err.message) ? err.message : 'Update failed.', 'error');
+    }).updateClientMilestone({ row: row, milestonePct: m, paymentPct: p, performedBy: boqEditCurrentUser() });
+  }
+
+  function boqSaveProject() {
+    const proj = document.getElementById('boqEditProjectSelect').value;
+    if (!proj) return;
+    const payload = {
+      project: proj,
+      owner: document.getElementById('boqEditOwner').value,
+      address: document.getElementById('boqEditAddress').value,
+      bidder: document.getElementById('boqEditBidder').value,
+      tcp: document.getElementById('boqEditTcp').value,
+      performedBy: boqEditCurrentUser()
+    };
+    const btn = document.getElementById('boqSaveProjectBtn');
+    btn.disabled = true;
+    showLoader();
+    google.script.run.withSuccessHandler(res => {
+      hideLoader();
+      btn.disabled = false;
+      if (res && res.success) {
+        Swal.fire({ icon: 'success', title: res.changed ? 'Project updated' : 'No changes to save', timer: 1400, showConfirmButton: false });
+      } else {
+        Swal.fire('Error', (res && res.error) ? res.error : 'Update failed.', 'error');
+      }
+    }).withFailureHandler(err => {
+      hideLoader();
+      btn.disabled = false;
+      Swal.fire('Error', (err && err.message) ? err.message : 'Update failed.', 'error');
+    }).updateProjectDetails(payload);
+  }
+
+  function boqAddNewMilestoneRow() {
+    const c = document.getElementById('boqNewMilestoneContainer');
+    const div = document.createElement('div');
+    div.className = 'row g-2 mb-2 boq-new-ms-row';
+    div.innerHTML = `
+      <div class="col-5"><input type="number" min="0" step="0.01" class="form-control form-control-sm border-dark boq-new-ms-milestone" placeholder="Milestone %"></div>
+      <div class="col-5"><input type="number" min="0" step="0.01" class="form-control form-control-sm border-dark boq-new-ms-payment" placeholder="Payment %"></div>
+      <div class="col-2"><button class="btn btn-sm btn-outline-danger w-100" onclick="this.closest('.boq-new-ms-row').remove()" title="Remove row"><i class="bi bi-x-lg"></i></button></div>`;
+    c.appendChild(div);
+  }
+
+  function boqSubmitNewMilestones() {
+    const proj = document.getElementById('boqEditProjectSelect').value;
+    if (!proj) return;
+    const rows = document.querySelectorAll('#boqNewMilestoneContainer .boq-new-ms-row');
+    const milestones = [];
+    rows.forEach(r => {
+      const mv = r.querySelector('.boq-new-ms-milestone').value;
+      const pv = r.querySelector('.boq-new-ms-payment').value;
+      if ((mv !== '' && mv !== null) || (pv !== '' && pv !== null)) {
+        milestones.push({ milestone: mv || 0, payment: pv || 0 });
+      }
+    });
+    if (!milestones.length) { Swal.fire('Nothing to add', 'Add at least one milestone row with a Payment %.', 'info'); return; }
+    const btn = document.getElementById('boqSaveMilestonesBtn');
+    btn.disabled = true;
+    showLoader();
+    google.script.run.withSuccessHandler(res => {
+      hideLoader();
+      btn.disabled = false;
+      if (res && res.success) {
+        Swal.fire({ icon: 'success', title: 'Added ' + res.added + ' milestone(s)', timer: 1400, showConfirmButton: false });
+        boqEditLoadProject();
+      } else {
+        Swal.fire('Error', (res && res.error) ? res.error : 'Failed to add milestones.', 'error');
+      }
+    }).withFailureHandler(err => {
+      hideLoader();
+      btn.disabled = false;
+      Swal.fire('Error', (err && err.message) ? err.message : 'Failed to add milestones.', 'error');
+    }).addProjectMilestones({ project: proj, milestones: milestones, performedBy: boqEditCurrentUser() });
+  }
+
   // --- UTILITY FORMATTERS ---
   function formatCurrencyInput(el) {
       let val = el.value.replace(/[^0-9.]/g, ''); 
@@ -900,36 +1373,64 @@
     loadAccQueue(); 
   };
 
+  // Escape user-controlled strings before they hit innerHTML or HTML
+  // attribute values. Project names, supplier names, requestor names etc.
+  // flow from sheet cells, which any sheet editor can write — so treat them
+  // as untrusted in the DOM. Keep this lightweight (no library) so the
+  // requestor portal stays self-contained.
+  function escAttr(v) {
+    if (v === null || v === undefined) return '';
+    return v.toString()
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+  function escHtml(v) { return escAttr(v); }
+
   function loadAccQueue() {
-    showLoader(); 
+    showLoader();
     google.script.run.withSuccessHandler(queue => {
       const body = document.getElementById('accQueueBody');
-      if(!queue.length) { 
-        body.innerHTML = '<div class="alert alert-secondary text-center">NO ITEMS PENDING ACCOUNTING.</div>'; 
-        hideLoader(); return; 
+      if(!queue.length) {
+        body.innerHTML = '<div class="alert alert-secondary text-center">NO ITEMS PENDING ACCOUNTING.</div>';
+        hideLoader(); return;
       }
       body.innerHTML = '';
-      
+
       queue.forEach(item => {
+        const poId = (item.mrfId || '').replace("MRF", "PO").replace("ARF", "PO");
         body.innerHTML += `
-          <div class="batch-card" data-date="${item.timestamp}">
+          <div class="batch-card" data-date="${escAttr(item.timestamp)}">
             <div class="batch-header">
-              <div><span class="badge bg-light text-dark me-2" style="font-size:0.75rem;">${item.timestamp}</span><span>${item.mrfId.replace("MRF","PO").replace("ARF","PO")}</span> <strong>${item.project}</strong></div>
-              <div class="small">SUPPLIER: ${item.supplier}</div>
+              <div><span class="badge bg-light text-dark me-2" style="font-size:0.75rem;">${escHtml(item.timestamp)}</span><span>${escHtml(poId)}</span> <strong>${escHtml(item.project)}</strong></div>
+              <div class="small">SUPPLIER: ${escHtml(item.supplier)}</div>
             </div>
             <div class="batch-body row align-items-center">
                 <div class="col-md-6">
-                    <a href="${item.poLink}" target="_blank" class="btn btn-outline-dark btn-sm fw-bold">VIEW PO PDF</a>
+                    <a href="${escAttr(item.poLink)}" target="_blank" class="btn btn-outline-dark btn-sm fw-bold">VIEW PO PDF</a>
                 </div>
                 <div class="col-md-6 text-end">
                     <label class="form-label fw-bold small">Attach Deposit Slip</label>
-                    <input type="file" id="file-${item.row}" class="form-control form-control-sm d-inline-block w-auto">
-                    <button class="btn btn-primary btn-sm ms-2" onclick="submitToSupplier(${item.row}, '${item.mrfId}', '${item.supplier}')">SEND TO SUPPLIER</button>
+                    <input type="file" id="file-${escAttr(item.row)}" class="form-control form-control-sm d-inline-block w-auto">
+                    <button class="btn btn-primary btn-sm ms-2 acc-send-btn" data-row="${escAttr(item.row)}" data-mrfid="${escAttr(item.mrfId)}" data-supplier="${escAttr(item.supplier)}">SEND TO SUPPLIER</button>
                 </div>
             </div>
           </div>`;
       });
-      hideLoader(); 
+
+      // Wire the Send-to-Supplier buttons via event delegation so we never
+      // interpolate untrusted strings into JS — closes the apostrophe and
+      // XSS holes that the prior inline onclick had.
+      document.querySelectorAll('#accQueueBody .acc-send-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const row = parseInt(btn.dataset.row, 10);
+          submitToSupplier(row, btn.dataset.mrfid, btn.dataset.supplier);
+        });
+      });
+
+      hideLoader();
     }).getAccountingQueue();
   }
 
@@ -1807,9 +2308,10 @@
   function pcaPopulateDirectProjectDropdown() {
     const sel = document.getElementById('pca-dir-project');
     if (!sel) return;
-    // Source the dropdown from `allProjects` — built server-side from the master
-    // Project Database (col A), which now also holds the petty cash running
-    // balance in cols I/J/K. Every registered project is selectable.
+    // Source the dropdown from petty-cash-enabled rows of Project Database
+    // (col A name + col I allocation; see setup.js and MRF.js loadPettyCashProjects_).
+    // To replenish a project not yet shown here, fill col I of that project's row
+    // in Project Database (any peso amount, even 0), then reload.
     // Defensive: rows from the server may have empty/null name fields — skip those
     // instead of throwing on p.name.toLowerCase().
     const opts = ['<option value="">-- Select Project --</option>'];
@@ -1865,7 +2367,7 @@
       }).withFailureHandler(err => {
         hideLoader();
         Swal.fire('Error', err.message, 'error');
-      }).processBatchPettyCashReplenish(sel, action);
+      }).processBatchPettyCashReplenish(sel, action, currentUserName || (typeof userEmail !== 'undefined' ? userEmail : ''));
     });
   }
 
@@ -1981,6 +2483,346 @@
         <td>${doc}</td>
       </tr>`;
     }).join('');
+  }
+
+  // =========================== CLIENT PAYMENTS (Collections) ===========================
+  let cpData = { projectList: [], summary: {}, milestones: [], payments: [] };
+  let cpProjectListCache = [];
+  let cpBankListCache = [];
+  let cpMethodCache = [];
+
+  function cpMoney(n) {
+    n = parseFloat(n);
+    if (isNaN(n)) n = 0;
+    return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+
+  function cpGetModal(id) { return bootstrap.Modal.getOrCreateInstance(document.getElementById(id)); }
+
+  function cpStatusBadge(st) {
+    if (st === 'Fully Paid') return '<span class="badge bg-success">Fully Paid</span>';
+    if (st === 'Partial') return '<span class="badge bg-warning text-dark">Partial</span>';
+    return '<span class="badge bg-secondary">Pending</span>';
+  }
+
+  // Entry point — called by the sidebar tab. Loads summary + project list, and
+  // (if a project is already selected) its detail.
+  function loadClientPayments() {
+    showLoader();
+    cpEnsureDropdowns();
+    const current = document.getElementById('cpProjectSelect').value;
+    google.script.run.withSuccessHandler(res => {
+      hideLoader();
+      res = res || {};
+      cpProjectListCache = res.projectList || [];
+      populateCpProjectDropdown(current);
+      renderCpSummary(res.summary || {});
+      if (res.project) applyCpProjectDetail(res); else resetCpProjectDetail();
+    }).withFailureHandler(err => {
+      hideLoader();
+      Swal.fire('Error', (err && err.message) ? err.message : 'Failed to load client payments.', 'error');
+    }).getClientPaymentsData(current || null);
+  }
+
+  // Lazy-load the Bank + Payment Method dropdowns used by the Record modal.
+  function cpEnsureDropdowns() {
+    if (!cpBankListCache.length) {
+      google.script.run.withSuccessHandler(l => { cpBankListCache = l || []; populateCpBankDropdown(); }).withFailureHandler(() => {}).getBankList();
+    }
+    if (!cpMethodCache.length) {
+      google.script.run.withSuccessHandler(l => {
+        cpMethodCache = (l && l.length) ? l : ['Bank Transfer', 'Check', 'Cash', 'Online', 'GCash'];
+        populateCpMethodDropdown();
+      }).withFailureHandler(() => {
+        cpMethodCache = ['Bank Transfer', 'Check', 'Cash', 'Online', 'GCash'];
+        populateCpMethodDropdown();
+      }).getDropdownValues('Payment Method');
+    }
+  }
+
+  function loadClientPaymentProject() {
+    const proj = document.getElementById('cpProjectSelect').value;
+    if (!proj) { resetCpProjectDetail(); return; }
+    showLoader();
+    google.script.run.withSuccessHandler(res => {
+      hideLoader();
+      res = res || {};
+      renderCpSummary(res.summary || {});
+      applyCpProjectDetail(res);
+    }).withFailureHandler(err => {
+      hideLoader();
+      Swal.fire('Error', (err && err.message) ? err.message : 'Failed to load project.', 'error');
+    }).getClientPaymentsData(proj);
+  }
+
+  function applyCpProjectDetail(res) {
+    cpData = res || {};
+    document.getElementById('cpProjectTcp').innerText = cpMoney(res.tcp || 0);
+    document.getElementById('cpRecordBtn').disabled = false;
+    renderCpMilestones(res.milestones || []);
+    renderCpPayments(res.payments || []);
+  }
+
+  function resetCpProjectDetail() {
+    cpData = { milestones: [], payments: [] };
+    document.getElementById('cpProjectTcp').innerText = '0.00';
+    document.getElementById('cpRecordBtn').disabled = true;
+    document.getElementById('cpMilestonesBody').innerHTML = '<tr><td colspan="8" class="text-center text-muted py-3">Select a project to view its milestones.</td></tr>';
+    document.getElementById('cpPaymentsBody').innerHTML = '<tr><td colspan="11" class="text-center text-muted py-3">Select a project to view its payments.</td></tr>';
+  }
+
+  function renderCpSummary(s) {
+    document.getElementById('cpTotalContract').innerText = cpMoney(s.totalContractValue || 0);
+    document.getElementById('cpTotalCollected').innerText = cpMoney(s.totalCollected || 0);
+    document.getElementById('cpTotalOutstanding').innerText = cpMoney(s.totalOutstanding || 0);
+  }
+
+  function renderCpMilestones(ms) {
+    const body = document.getElementById('cpMilestonesBody');
+    if (!ms.length) {
+      body.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-3">No milestones defined for this project. You can still record a general payment.</td></tr>';
+      return;
+    }
+    body.innerHTML = ms.map(m => {
+      const prefill = (m.balance > 0 ? m.balance : m.amountDue) || 0;
+      return `<tr>
+        <td class="fw-bold">${escHtml(m.label)}</td>
+        <td class="text-center">${m.milestonePct}%</td>
+        <td class="text-center">${m.paymentPct}%</td>
+        <td class="text-end">₱${cpMoney(m.amountDue)}</td>
+        <td class="text-end text-success">₱${cpMoney(m.collected)}</td>
+        <td class="text-end ${m.balance > 0.005 ? 'text-danger' : ''}">₱${cpMoney(m.balance)}</td>
+        <td class="text-center">${cpStatusBadge(m.status)}</td>
+        <td class="text-center text-nowrap">
+          <button class="btn btn-sm btn-dark fw-bold" onclick="openRecordPayment(${m.row}, '${escAttr(m.label)}', ${prefill})" title="Record a payment for this milestone"><i class="bi bi-plus-lg"></i></button>
+          <button class="btn btn-sm btn-outline-dark" onclick="openEditMilestone(${m.row}, ${m.milestonePct}, ${m.paymentPct})" title="Edit milestone"><i class="bi bi-pencil"></i></button>
+        </td>
+      </tr>`;
+    }).join('');
+  }
+
+  function renderCpPayments(ps) {
+    const body = document.getElementById('cpPaymentsBody');
+    if (!ps.length) {
+      body.innerHTML = '<tr><td colspan="11" class="text-center text-muted py-3">No payments recorded for this project yet.</td></tr>';
+      return;
+    }
+    body.innerHTML = ps.map(p => {
+      const voided = p.status === 'Voided';
+      const bankRef = [p.bankName, p.referenceNo || p.checkNumber].filter(Boolean).join(' / ');
+      const action = voided
+        ? '<span class="badge bg-secondary">Voided</span>'
+        : `<button class="btn btn-sm btn-outline-danger" onclick="voidCpPayment(${p.row}, '${escAttr(p.paymentId)}')" title="Void this payment"><i class="bi bi-x-circle"></i></button>`;
+      return `<tr class="${voided ? 'text-muted' : ''}">
+        <td class="fw-bold">${escHtml(p.paymentId)}</td>
+        <td>${escHtml(p.dateReceived)}</td>
+        <td>${escHtml(p.milestone || 'General')}</td>
+        <td>${escHtml(p.billingRef)}</td>
+        <td class="text-end">₱${cpMoney(p.amountReceived)}</td>
+        <td>${escHtml(p.paymentMethod)}</td>
+        <td>${escHtml(bankRef)}</td>
+        <td>${escHtml(p.orNumber)}</td>
+        <td>${escHtml(p.receivedBy)}</td>
+        <td class="text-center">${voided ? '<span class="badge bg-secondary">Voided</span>' : '<span class="badge bg-success">Active</span>'}</td>
+        <td class="text-center">${action}</td>
+      </tr>`;
+    }).join('');
+  }
+
+  function populateCpProjectDropdown(keep) {
+    const sel = document.getElementById('cpProjectSelect');
+    if (!sel) return;
+    const current = (keep !== undefined) ? keep : sel.value;
+    sel.innerHTML = '<option value="">-- Select Project --</option>';
+    cpProjectListCache.forEach(p => sel.add(new Option(p, p)));
+    if (current) {
+      const opts = Array.from(sel.options).map(o => o.value);
+      if (opts.includes(current)) sel.value = current;
+    }
+  }
+
+  function populateCpBankDropdown() {
+    const sel = document.getElementById('cpPayBank');
+    if (!sel) return;
+    const cur = sel.value;
+    sel.innerHTML = '<option value="">-- None --</option>';
+    cpBankListCache.forEach(b => sel.add(new Option(b, b)));
+    if (cur) sel.value = cur;
+  }
+
+  function populateCpMethodDropdown() {
+    const sel = document.getElementById('cpPayMethod');
+    if (!sel) return;
+    const cur = sel.value;
+    sel.innerHTML = '<option value="">-- Select --</option>';
+    cpMethodCache.forEach(m => sel.add(new Option(m, m)));
+    if (cur) sel.value = cur;
+  }
+
+  // milestoneRow / milestoneLabel are '' for a general (non-milestone) payment.
+  function openRecordPayment(milestoneRow, milestoneLabel, amountDue) {
+    const proj = document.getElementById('cpProjectSelect').value;
+    if (!proj) { Swal.fire('Select a project', 'Choose a project first.', 'info'); return; }
+    document.getElementById('cpPayMilestoneRow').value = milestoneRow || '';
+    document.getElementById('cpPayMilestoneLabel').value = milestoneLabel || '';
+    document.getElementById('cpPayProjectLabel').innerText = proj;
+    document.getElementById('cpPayMilestoneText').innerText = milestoneLabel || 'General Payment';
+    document.getElementById('cpPayBillingRef').value = '';
+    document.getElementById('cpPayAmountDue').value = (amountDue && parseFloat(amountDue) > 0) ? cpMoney(amountDue) : '';
+    document.getElementById('cpPayAmountReceived').value = '';
+    document.getElementById('cpPayDateReceived').value = '';
+    document.getElementById('cpPayMethod').value = '';
+    document.getElementById('cpPayBank').value = '';
+    document.getElementById('cpPayDepositedTo').value = '';
+    document.getElementById('cpPayOrNumber').value = '';
+    document.getElementById('cpPayCheckNumber').value = '';
+    document.getElementById('cpPayCheckDate').value = '';
+    document.getElementById('cpPayReferenceNo').value = '';
+    document.getElementById('cpPayRemarks').value = '';
+    cpGetModal('cpRecordModal').show();
+  }
+
+  function submitClientPayment() {
+    const proj = document.getElementById('cpProjectSelect').value;
+    const amountReceived = parseFormattedCurrency(document.getElementById('cpPayAmountReceived').value);
+    const method = document.getElementById('cpPayMethod').value;
+    const dateReceived = document.getElementById('cpPayDateReceived').value;
+    if (!proj) return Swal.fire('Required', 'Select a project.', 'warning');
+    if (!amountReceived || amountReceived <= 0) return Swal.fire('Required', 'Enter a valid Amount Received.', 'warning');
+    if (!method) return Swal.fire('Required', 'Select a Payment Method.', 'warning');
+    if (!dateReceived) return Swal.fire('Required', 'Enter the Date Received.', 'warning');
+
+    const payload = {
+      project: proj,
+      milestoneRow: document.getElementById('cpPayMilestoneRow').value,
+      milestone: document.getElementById('cpPayMilestoneLabel').value,
+      billingRef: document.getElementById('cpPayBillingRef').value.trim(),
+      amountDue: parseFormattedCurrency(document.getElementById('cpPayAmountDue').value),
+      amountReceived: amountReceived,
+      dateReceived: dateReceived,
+      paymentMethod: method,
+      bankName: document.getElementById('cpPayBank').value,
+      depositedTo: document.getElementById('cpPayDepositedTo').value.trim(),
+      checkNumber: document.getElementById('cpPayCheckNumber').value.trim(),
+      checkDate: document.getElementById('cpPayCheckDate').value,
+      referenceNo: document.getElementById('cpPayReferenceNo').value.trim(),
+      orNumber: document.getElementById('cpPayOrNumber').value.trim(),
+      remarks: document.getElementById('cpPayRemarks').value.trim(),
+      receivedBy: (typeof currentUserName !== 'undefined' && currentUserName) ? currentUserName : ''
+    };
+
+    const btn = document.getElementById('cpPaySubmitBtn');
+    btn.disabled = true;
+    showLoader();
+    google.script.run.withSuccessHandler(res => {
+      hideLoader();
+      btn.disabled = false;
+      if (res && res.success) {
+        cpGetModal('cpRecordModal').hide();
+        Swal.fire('Saved', 'Payment ' + res.id + ' recorded.', 'success');
+        loadClientPaymentProject();
+      } else {
+        Swal.fire('Error', (res && res.error) ? res.error : 'Failed to record payment.', 'error');
+      }
+    }).withFailureHandler(err => {
+      hideLoader();
+      btn.disabled = false;
+      Swal.fire('Error', (err && err.message) ? err.message : 'Submission failed.', 'error');
+    }).recordClientPayment(payload);
+  }
+
+  function openEditMilestone(row, milestonePct, paymentPct) {
+    document.getElementById('cpEditMilestoneRow').value = row;
+    document.getElementById('cpEditMilestonePct').value = milestonePct;
+    document.getElementById('cpEditPaymentPct').value = paymentPct;
+    cpGetModal('cpMilestoneModal').show();
+  }
+
+  function submitEditMilestone() {
+    const payload = {
+      row: document.getElementById('cpEditMilestoneRow').value,
+      milestonePct: document.getElementById('cpEditMilestonePct').value,
+      paymentPct: document.getElementById('cpEditPaymentPct').value,
+      performedBy: (typeof currentUserName !== 'undefined' && currentUserName) ? currentUserName : ''
+    };
+    const btn = document.getElementById('cpEditMilestoneBtn');
+    btn.disabled = true;
+    showLoader();
+    google.script.run.withSuccessHandler(res => {
+      hideLoader();
+      btn.disabled = false;
+      if (res && res.success) {
+        cpGetModal('cpMilestoneModal').hide();
+        Swal.fire('Saved', res.changed ? 'Milestone updated and logged.' : 'No changes were made.', 'success');
+        loadClientPaymentProject();
+      } else {
+        Swal.fire('Error', (res && res.error) ? res.error : 'Failed to update milestone.', 'error');
+      }
+    }).withFailureHandler(err => {
+      hideLoader();
+      btn.disabled = false;
+      Swal.fire('Error', (err && err.message) ? err.message : 'Update failed.', 'error');
+    }).updateClientMilestone(payload);
+  }
+
+  function voidCpPayment(row, paymentId) {
+    Swal.fire({
+      title: 'Void payment ' + paymentId + '?',
+      input: 'text',
+      inputLabel: 'Reason (optional)',
+      inputPlaceholder: 'e.g. duplicate entry',
+      showCancelButton: true,
+      confirmButtonText: 'Void',
+      confirmButtonColor: '#b02a37'
+    }).then(r => {
+      if (!r.isConfirmed) return;
+      showLoader();
+      google.script.run.withSuccessHandler(res => {
+        hideLoader();
+        if (res && res.success) {
+          Swal.fire('Voided', 'Payment voided and logged.', 'success');
+          loadClientPaymentProject();
+        } else {
+          Swal.fire('Error', (res && res.error) ? res.error : 'Failed to void.', 'error');
+        }
+      }).withFailureHandler(err => {
+        hideLoader();
+        Swal.fire('Error', (err && err.message) ? err.message : 'Void failed.', 'error');
+      }).voidClientPayment({ row: row, reason: r.value || '', performedBy: (typeof currentUserName !== 'undefined' && currentUserName) ? currentUserName : '' });
+    });
+  }
+
+  function toggleClientAuditLog() {
+    const wrap = document.getElementById('cpAuditWrap');
+    const btn = document.getElementById('cpAuditToggle');
+    if (wrap.style.display === 'none') {
+      wrap.style.display = 'block';
+      btn.innerText = 'Hide';
+      showLoader();
+      google.script.run.withSuccessHandler(rows => {
+        hideLoader();
+        rows = rows || [];
+        const auditBody = document.getElementById('cpAuditBody');
+        if (!rows.length) {
+          auditBody.innerHTML = '<tr><td colspan="9" class="text-center text-muted py-3">No activity yet.</td></tr>';
+          return;
+        }
+        auditBody.innerHTML = rows.map(r => `<tr>
+          <td>${escHtml(r.timestamp)}</td>
+          <td>${escHtml(r.entity)}</td>
+          <td>${escHtml(r.reference)}</td>
+          <td>${escHtml(r.action)}</td>
+          <td>${escHtml(r.field)}</td>
+          <td>${escHtml(r.oldValue)}</td>
+          <td>${escHtml(r.newValue)}</td>
+          <td>${escHtml(r.performedBy)}</td>
+          <td>${escHtml(r.notes)}</td>
+        </tr>`).join('');
+      }).withFailureHandler(() => { hideLoader(); }).getClientPaymentAuditLog(document.getElementById('cpProjectSelect').value || null);
+    } else {
+      wrap.style.display = 'none';
+      btn.innerText = 'Show';
+    }
   }
 </script>
 </body>

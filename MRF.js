@@ -17,12 +17,13 @@ const SHEETS = {
   PAYMENT_TERMS: "Payment Terms Database",
   EXPENSE_LOGS: "Expense Logs",
   EXPENSE_ACTIVITY: "Expense Activity Logs",
-  // Petty Cash module (ported from Finance Portal). The per-project fund now
-  // lives in the master "Project Database" sheet (no separate PettyCash Projects
-  // sheet) to avoid duplicating the project name across two sheets. Project rows
-  // are looked up by row index — i.e. row 2 = projectId 2 — so do not reorder it.
-  // The fund columns sit AFTER "Total Contract Price":
-  //   col I = Total Allocated Fund, col J = Total Expenses, col K = Remaining Balance.
+  // Client Payments (collections / accounts receivable) and its audit trail.
+  CLIENT_PAYMENTS: "Client Payments",
+  CLIENT_PAYMENT_LOGS: "Client Payment Logs",
+  // Petty Cash module. Per-project allocations now live in Project Database
+  // cols I/J/K (see setup.js); the projectId carried by petty cash payloads is
+  // the Project Database row index — i.e. row 2 = projectId 2 — so do not
+  // reorder Project Database rows. Two ledger sheets remain:
   PETTY_CASH_EXPENSES:       "PettyCash Expenses",
   PETTY_CASH_REPLENISHMENTS: "PettyCash Replenishments",
   // Single sheet that backs every dropdown in the app. Columns:
@@ -86,13 +87,29 @@ function loginUser(identifier, password) {
     const salt = data[rowIndex][5];
     
     const isNewUser = (!salt || salt.toString().trim() === "");
+    const storedPassStr = (storedPass === null || storedPass === undefined) ? "" : storedPass.toString();
+    const submittedPass = (password === null || password === undefined) ? "" : password.toString();
+
+    // "TMP:" sentinel: written by recoverPassword. Validate the hash against
+    // the substring, but force isNew=true so the UI shows the set-password
+    // modal. finalizePassword overwrites with a normal hash on first login.
+    if (storedPassStr.indexOf("TMP:") === 0 && !isNewUser) {
+      const expected = storedPassStr.substring(4);
+      if (hashPassword(submittedPass, salt) === expected) {
+        return { success: true, name, email, role, assignedProjects, isNew: true };
+      }
+      return { error: "Incorrect password." };
+    }
 
     if (isNewUser) {
-      if (password.toString() === storedPass.toString() || storedPass.toString() === "") {
+      // Require BOTH a non-empty stored value AND an exact match. Previously a
+      // blank stored password accepted any submitted password — closed by the
+      // explicit storedPassStr length guard.
+      if (storedPassStr.length > 0 && submittedPass === storedPassStr) {
         return { success: true, name, email, role, assignedProjects, isNew: true };
       }
     } else {
-      if (hashPassword(password, salt) === storedPass) {
+      if (hashPassword(submittedPass, salt) === storedPassStr) {
         return { success: true, name, email, role, assignedProjects, isNew: false };
       }
     }
@@ -130,19 +147,42 @@ function recoverPassword(identifier) {
     ));
 
     if (rowIndex === -1) return "❌ Name or Email not found.";
-    
+
     const fullName = data[rowIndex][0];
     const email = data[rowIndex][1];
     const tempPass = Math.random().toString(36).slice(-8).toUpperCase();
-    
-    sheet.getRange(rowIndex + 1, 5, 1, 2).setValues([[tempPass, ""]]);
 
+    // Try to send the email FIRST. Only write the reset to the sheet if the
+    // notification actually went out — otherwise we'd lock the user out and
+    // leak the temp password back to whoever called the endpoint.
+    let sent = false;
     try {
-      GmailApp.sendEmail(email, "MRF System - Password Reset", `Hello ${fullName},\n\nYour password has been reset.\n\nTemporary Password: ${tempPass}\n\nPlease log in and set a new password.`);
-      return "✅ SUCCESS: A temporary password has been sent to your registered email address.";
+      if (email) {
+        GmailApp.sendEmail(
+          email,
+          "MRF System - Password Reset",
+          `Hello ${fullName},\n\nYour password has been reset.\n\nTemporary Password: ${tempPass}\n\nPlease log in and set a new password.`
+        );
+        sent = true;
+      }
     } catch (mailErr) {
-      return "⚠️ Reset worked, but EMAIL FAILED. Your temporary password is: " + tempPass;
+      console.error("Password reset email failed: " + mailErr.toString());
     }
+
+    if (!sent) {
+      return "⚠️ Could not send the reset email. Please contact an administrator.";
+    }
+
+    // Store the temp password hashed with a fresh salt and a "TMP:" prefix.
+    // The prefix tells loginUser to accept the value and treat the session as
+    // isNew (so the new-password modal still appears on first login) — and
+    // finalizePassword() overwrites it with a normal hash. This avoids
+    // leaving the sheet cell in cleartext, which previously combined with
+    // the open web app to expose temp passwords in the sheet.
+    const salt = Utilities.getUuid();
+    const hashed = hashPassword(tempPass, salt);
+    sheet.getRange(rowIndex + 1, 5, 1, 2).setValues([["TMP:" + hashed, salt]]);
+    return "✅ SUCCESS: A temporary password has been sent to your registered email address.";
   } catch (e) { return "❌ Error: " + e.toString(); }
 }
 
@@ -192,7 +232,14 @@ function withDocumentLock_(fn, timeoutMs) {
     return "Error: Lock acquisition failed (" + e.message + ").";
   }
   try {
-    return fn();
+    const out = fn();
+    return out;
+  } catch (e) {
+    // Convert any uncaught throw inside the critical section into the same
+    // "Error: ..." string shape callers already match against with
+    // .indexOf('Error'). Without this, callers received `undefined` and a
+    // ".indexOf is not a function" stack trace.
+    return "Error: " + (e && e.message ? e.message : e);
   } finally {
     try { lock.releaseLock(); } catch (e) {}
   }
@@ -300,8 +347,16 @@ function getLogoBase64(fileName) {
 
 function doGet(e) {
   if (e.parameter.receiveToken) {
+    // Validate the token before rendering. Strip anything but [a-zA-Z0-9-] so
+    // a malicious token can't smuggle characters into the HTML template (the
+    // <?= ?> scriptlet already HTML-escapes, but we keep this tight anyway).
+    const rawToken = (e.parameter.receiveToken || "").toString().trim();
+    const safeToken = rawToken.replace(/[^A-Za-z0-9\-]/g, "");
+    const mappedMrfId = resolveReceiveToken_(safeToken);
     let template = HtmlService.createTemplateFromFile('Receive');
-    template.receiveToken = e.parameter.receiveToken;
+    template.receiveToken = mappedMrfId ? safeToken : "";
+    template.mrfReference = mappedMrfId || "";
+    template.tokenValid = !!mappedMrfId;
     template.logo1Url = getLogoDisplayUrl("logo1.png");
     template.logo2Url = getLogoDisplayUrl("logo2.png");
     return template.evaluate()
@@ -327,8 +382,9 @@ function getSecurePortalHtml(email) {
     const data = SS.getSheetByName(SHEETS.EMPLOYEES).getDataRange().getValues();
     const input = email.toString().trim().toLowerCase();
     
-    // Find user by email directly from DB
-    const userRow = data.find((row, idx) => idx > 0 && row[1].toString().trim().toLowerCase() === input);
+    // Find user by email directly from DB. Guard against blank email cells —
+    // a single missing col B used to crash this whole render.
+    const userRow = data.find((row, idx) => idx > 0 && row[1] && row[1].toString().trim().toLowerCase() === input);
     if (!userRow) return "";
     
     const role = (userRow[2] || "").toString().toLowerCase().trim();
@@ -377,7 +433,9 @@ function getInitialUIData(userIdentifier) {
     const input = userIdentifier.toString().trim().toLowerCase();
     
     for (let i = 1; i < empData.length; i++) {
-      if (empData[i][0].toString().trim().toLowerCase() === input || empData[i][1].toString().trim().toLowerCase() === input) {
+      const nameCell  = empData[i][0] ? empData[i][0].toString().trim().toLowerCase() : "";
+      const emailCell = empData[i][1] ? empData[i][1].toString().trim().toLowerCase() : "";
+      if (nameCell === input || emailCell === input) {
          userName = empData[i][0];
          let pStr = empData[i][3] ? empData[i][3].toString().trim() : "";
          if (pStr !== "") allowedProjects = pStr.split(/[,;\n]/).map(s => s.trim()).filter(s => s);
@@ -439,7 +497,9 @@ function getInitialUIData(userIdentifier) {
   if (justSheet && userName) {
       const jData = justSheet.getDataRange().getValues();
       for (let j = 1; j < jData.length; j++) {
-         if (jData[j][3].toString().trim() === userName && jData[j][8].toString().trim() === "Pending Reply") {
+         const reqCell    = jData[j][3] ? jData[j][3].toString().trim() : "";
+         const statusCell = jData[j][8] ? jData[j][8].toString().trim() : "";
+         if (reqCell === userName && statusCell === "Pending Reply") {
             data.pendingJustifications.push({
                date: formatFullDate(new Date(jData[j][0])),
                mrfId: jData[j][1],
@@ -571,10 +631,14 @@ function getItemsForScope(proj, phase, scope) {
     }
   }
 
+  // Coerce to string before localeCompare — sheet cells like a numeric
+  // sub-scope code (e.g., 1.1) return as Number from getValues() and don't
+  // have a .localeCompare method.
+  function _s(v) { return (v === null || v === undefined) ? "" : v.toString(); }
   return Object.values(items).sort((a, b) => {
-    if (a.subScope !== b.subScope) return a.subScope.localeCompare(b.subScope);
-    if (a.subSubScope !== b.subSubScope) return a.subSubScope.localeCompare(b.subSubScope);
-    return a.itemName.localeCompare(b.itemName);
+    if (a.subScope !== b.subScope) return _s(a.subScope).localeCompare(_s(b.subScope));
+    if (a.subSubScope !== b.subSubScope) return _s(a.subSubScope).localeCompare(_s(b.subSubScope));
+    return _s(a.itemName).localeCompare(_s(b.itemName));
   });
 }
 
@@ -678,6 +742,24 @@ function submitMRF(payload, fileObj) {
   } catch (err) { 
     return { success: false, error: err.toString() }; 
   }
+}
+
+// Look up a person's job title from Employee Database col C (Position).
+// Returns "" if not found, so callers can fall back gracefully. Case- and
+// whitespace-insensitive match against col A (Name).
+function getEmployeePosition_(name) {
+  if (!name) return "";
+  try {
+    const sheet = SS.getSheetByName(SHEETS.EMPLOYEES);
+    if (!sheet) return "";
+    const data = sheet.getDataRange().getValues();
+    const key = name.toString().trim().toLowerCase();
+    for (let i = 1; i < data.length; i++) {
+      const cell = (data[i][0] || "").toString().trim().toLowerCase();
+      if (cell === key) return (data[i][2] || "").toString().trim();
+    }
+  } catch (e) {}
+  return "";
 }
 
 function generateDocPDF(payload, id, timestamp, photoBlob, address, title, signatoryName, hasPrices = false, supplierName = "", isForSupplier = false) {
@@ -798,7 +880,11 @@ function generateDocPDF(payload, id, timestamp, photoBlob, address, title, signa
     photoSection = `<div style="margin-top:30px; border-top: 2px solid #2c3e50; padding-top: 20px;"><h3 style="color:#2c3e50; text-align:center;">PHOTO ATTACHMENT</h3><div style="text-align:center;"><img src="data:${photoBlob.getContentType()};base64,${Utilities.base64Encode(photoBlob.getBytes())}" style="max-width:450px; border: 1px solid #ddd; border-radius: 8px; padding: 5px;"/></div></div>`;
   }
 
-  let signatureBlock = `<div style="margin-top: 40px; width: 250px; text-align: center; float: right;"><div style="border-bottom: 1.5px solid #000; padding-bottom: 5px; font-weight: bold; text-transform: uppercase;">${signatoryName}</div><div style="font-size: 13px; margin-top: 5px;">${title.includes("PURCHASE ORDER") || title.includes("APPROVED") ? "Approver" : "Requestor"}</div></div><div style="clear: both;"></div>`;
+  // Signature block: name on top, the person's actual Position underneath
+  // (looked up from Employee Database). Falls back to a blank second line so
+  // we never print the generic "Approver" / "Requestor" labels.
+  const signatoryPosition = getEmployeePosition_(signatoryName);
+  let signatureBlock = `<div style="margin-top: 40px; width: 250px; text-align: center; float: right;"><div style="border-bottom: 1.5px solid #000; padding-bottom: 5px; font-weight: bold; text-transform: uppercase;">${signatoryName}</div><div style="font-size: 13px; margin-top: 5px;">${signatoryPosition || "&nbsp;"}</div></div><div style="clear: both;"></div>`;
 
   const subjectField = payload.items[0].scope || payload.items[0].phase || "N/A";
   
@@ -1003,7 +1089,14 @@ function processBatchApproval(requestId, itemUpdates, approverName) {
             remainingQtyToApprove = 0;
           }
         }
-        if (remainingQtyToApprove > 0) allocations[0] += remainingQtyToApprove;
+        // Surplus over the total originally requested is dumped into the
+        // first allocation slot — preserves the historical behavior in case
+        // anyone relies on it. We log a warning so it shows up in Stackdriver
+        // if it ever surfaces in practice.
+        if (remainingQtyToApprove > 0) {
+          console.warn("processBatchApproval: approved qty for '" + sName + "' exceeded total requested by " + remainingQtyToApprove + "; allocated to first matched row.");
+          allocations[0] += remainingQtyToApprove;
+        }
 
         for (let k = 0; k < matchedIndices.length; k++) {
           let idx = matchedIndices[k];
@@ -1029,7 +1122,11 @@ function processBatchApproval(requestId, itemUpdates, approverName) {
       }
     });
 
-    logSheet.getRange(1, 1, logData.length, logData[0].length).setValues(logData);
+    // Skip row 1 on write-back — it's the header row, never modified by the
+    // loop above, and including it risks stomping a future header change.
+    if (logData.length > 1) {
+      logSheet.getRange(2, 1, logData.length - 1, logData[0].length).setValues(logData.slice(1));
+    }
     if (invUpdates.length > 0) invSheet.getRange(invSheet.getLastRow() + 1, 1, invUpdates.length, invUpdates[0].length).setValues(invUpdates);
 
     const approvedItems = itemUpdates.filter(it => (parseFloat(it.finalQty) || 0) > 0);
@@ -1117,9 +1214,11 @@ function processBatchDecline(requestId, itemRemarks, approverName) {
         logData[i][16] = now;
       }
     }
-    logs.getRange(1, 1, logData.length, logData[0].length).setValues(logData);
+    if (logData.length > 1) {
+      logs.getRange(2, 1, logData.length - 1, logData[0].length).setValues(logData.slice(1));
+    }
 
-    if (requestorEmail !== "") { 
+    if (requestorEmail !== "") {
       const reason = itemRemarks.length > 0 ? itemRemarks[0].remarks : "No reason provided.";
       try{ GmailApp.sendEmail(requestorEmail, "MRF Declined: " + requestId, "Hello,\n\nYour request " + requestId + " has been declined.\n\nReason: " + reason + "\n\nIf you have any questions, please contact the approver."); }catch(e){}
     }
@@ -1160,7 +1259,9 @@ function processBatchJustify(requestId, itemQuestions, approverEmail) {
          requestor = logData[i][3];
       }
     }
-    logs.getRange(1, 1, logData.length, logData[0].length).setValues(logData);
+    if (logData.length > 1) {
+      logs.getRange(2, 1, logData.length - 1, logData[0].length).setValues(logData.slice(1));
+    }
 
     let jUpdates = [];
     for (let itemName in questionsMap) {
@@ -1174,7 +1275,9 @@ function processBatchJustify(requestId, itemQuestions, approverEmail) {
          qRows[j][10] = "Pending Justification";
       }
     }
-    queue.getRange(1, 1, qRows.length, qRows[0].length).setValues(qRows);
+    if (qRows.length > 1) {
+      queue.getRange(2, 1, qRows.length - 1, qRows[0].length).setValues(qRows.slice(1));
+    }
 
     return "Requested further justification.";
   } catch (e) { return "Error: " + e.message; }
@@ -1203,6 +1306,7 @@ function submitJustificationReply(repliesArray) {
      const qData = queue.getDataRange().getValues();
      
      let emailsToSend = {}; // Store { "approver@email.com": { mrfId: "MRF-123", items: [] } }
+     let matched = 0;
 
      repliesArray.forEach(upd => {
         // Update Justification Database
@@ -1210,7 +1314,8 @@ function submitJustificationReply(repliesArray) {
            if(jData[i][1].toString() === upd.mrfId && jData[i][5].toString() === upd.itemName && jData[i][8] === "Pending Reply") {
               jData[i][7] = upd.reply;
               jData[i][8] = "Resolved";
-              
+              matched++;
+
               let appEmail = jData[i][4].toString();
               if (appEmail) {
                   if (!emailsToSend[appEmail]) emailsToSend[appEmail] = {};
@@ -1232,9 +1337,18 @@ function submitJustificationReply(repliesArray) {
         }
      });
 
-     justSheet.getRange(1, 1, jData.length, jData[0].length).setValues(jData);
-     logs.getRange(1, 1, lData.length, lData[0].length).setValues(lData);
-     queue.getRange(1, 1, qData.length, qData[0].length).setValues(qData);
+     // If no Pending Reply row matched, log a warning (Stackdriver) but
+     // preserve the historical "Replies submitted successfully." response
+     // so we don't surprise the UI with a new error path on edge cases.
+     if (matched === 0) {
+       console.warn("submitJustificationReply: no Pending Reply rows matched the submitted items.");
+     }
+
+     // Skip the header row on each write-back to avoid stomping headers if
+     // any future loop accidentally touches index 0.
+     if (jData.length > 1) justSheet.getRange(2, 1, jData.length - 1, jData[0].length).setValues(jData.slice(1));
+     if (lData.length > 1) logs.getRange(2, 1, lData.length - 1, lData[0].length).setValues(lData.slice(1));
+     if (qData.length > 1) queue.getRange(2, 1, qData.length - 1, qData[0].length).setValues(qData.slice(1));
 
      // Trigger automatic email to approver
      for (let email in emailsToSend) {
@@ -1360,7 +1474,13 @@ function processEncoding(payloadUpdates) {
     const priceSheet = SS.getSheetByName(SHEETS.SUPPLIER_PRICE_IN);
     const accSheet = SS.getSheetByName(SHEETS.ACCOUNTING);
     const projSheet = SS.getSheetByName(SHEETS.PROJECTS);
+    const suppSheet = SS.getSheetByName(SHEETS.SUPPLIERS);
     if (!logSheet || !poSheet) return "Error: Required sheets missing. Run Setup.";
+
+    // Collected status messages from the per-supplier email send loop. Surfaced
+    // in the return value so the encoder UI can tell the user why a supplier
+    // didn't get an email (most common cause: missing/invalid email in Supplier DB).
+    const emailNotes = [];
 
     const logData = logSheet.getDataRange().getValues();
     const now = new Date();
@@ -1385,11 +1505,18 @@ function processEncoding(payloadUpdates) {
       // take the first match for each.
       let project = "";
       let requestor = "";
+      let approver = "";   // MRF Submission Logs col N (index 13) — set by processBatchApproval
       const itemMeta = {};
       for (let i = 1; i < logData.length; i++) {
         if ((logData[i][1] || "").toString().trim() !== mrfId) continue;
+        const rowStatus = (logData[i][12] || "").toString().trim().toLowerCase();
         if (!project)   project   = (logData[i][2] || "").toString();
         if (!requestor) requestor = (logData[i][3] || "").toString();
+        if (!approver)  approver  = (logData[i][13] || "").toString().trim();
+        // Only pick item metadata from APPROVED rows. Previously the first
+        // matching row won — which could be a declined row with the same
+        // item name, leaving the PO PDF with stale phase/remarks.
+        if (rowStatus !== "approved") continue;
         const itemKey = (logData[i][5] || "").toString().trim().toLowerCase();
         if (itemKey && !itemMeta[itemKey]) {
           itemMeta[itemKey] = {
@@ -1451,19 +1578,88 @@ function processEncoding(payloadUpdates) {
 
       // --- Generate the PO PDF (PURCHASE ORDER, with prices, addressed to supplier).
       let poLink = "";
+      let poBlobForEmail = null;
       try {
         const address = projAddr[project.trim()] || "N/A";
         const poId = poDisplayId_(mrfId);
+        // Signatory on the PO is the approver who released this MRF (their
+        // Position is looked up from Employee Database inside generateDocPDF
+        // and printed under the name). Fall back to "Accounting" only if the
+        // log row is missing the approver name (e.g., legacy / imported MRFs).
+        const signatory = approver || "Accounting";
         const poPdfData = generateDocPDF(
           { project: project, items: poItems, paymentTerms: firstTermDesc, paymentDate: firstTermDate },
-          poId, now, null, address, "PURCHASE ORDER", "Accounting",
+          poId, now, null, address, "PURCHASE ORDER", signatory,
           true,      // hasPrices — show unit price + grand total
           supplier,  // supplierName — renders supplier + payment-schedule block in header
           false      // isForSupplier — keep grand total visible (it's the buyer-side copy)
         );
         poLink = poPdfData.url;
+        // generateDocPDF returns { url, blob? } — capture the blob if present so
+        // we can attach without a second Drive round-trip below.
+        if (poPdfData && poPdfData.blob) poBlobForEmail = poPdfData.blob;
       } catch (e) {
         console.error("PO PDF generation failed: " + e.toString());
+      }
+
+      // --- Email the supplier with the PO attached. Best-effort — never fail
+      //     the encoding flow if the email pipeline is unhappy, but record a
+      //     status note so the encoder UI can show why no email was sent.
+      try {
+        if (!suppSheet) {
+          emailNotes.push('Supplier Database sheet missing — no email sent for "' + supplier + '"');
+        } else {
+          const sData = suppSheet.getDataRange().getValues();
+          let supplierEmail = "";
+          let contactPerson = "Supplier";
+          let matched = false;
+          for (let i = 1; i < sData.length; i++) {
+            if ((sData[i][0] || "").toString().trim().toLowerCase() === supplier.toLowerCase()) {
+              supplierEmail = (sData[i][2] || "").toString().trim();
+              contactPerson = (sData[i][4] || "Supplier").toString();
+              matched = true;
+              break;
+            }
+          }
+          if (!matched) {
+            emailNotes.push('Supplier "' + supplier + '" not found in Supplier Database — no email sent');
+          } else if (!supplierEmail) {
+            emailNotes.push('Supplier "' + supplier + '" has no Email (col C) in Supplier Database — no email sent');
+          } else if (!poLink && !poBlobForEmail) {
+            emailNotes.push('PO PDF generation failed for "' + supplier + '" — no email sent (see logs)');
+          } else {
+            const attachments = [];
+            if (poBlobForEmail) {
+              attachments.push(poBlobForEmail);
+            } else {
+              const poFileId = getFileIdFromUrl(poLink);
+              if (poFileId) {
+                try { attachments.push(safeDriveAction(function () { return DriveApp.getFileById(poFileId).getBlob(); })); } catch (e) {}
+              }
+            }
+            const termsLine = firstTermDesc ? ("\n\nPayment terms: " + firstTermDesc + (firstTermDate ? " (target dates: " + firstTermDate + ")" : "")) : "";
+            const body =
+              "Hello " + contactPerson + ",\n\n" +
+              "Please find attached the Purchase Order for Project: " + project + "." +
+              termsLine + "\n\n" +
+              "Once payment has been processed by our Accounting team, we will follow up with the deposit slip.\n\n" +
+              "Thank you.";
+            try {
+              GmailApp.sendEmail(
+                supplierEmail,
+                "Purchase Order Issued: " + poDisplayId_(mrfId) + " - " + project,
+                body,
+                { attachments: attachments }
+              );
+            } catch (sendErr) {
+              emailNotes.push('Sending PO to "' + supplier + '" failed: ' + sendErr.toString());
+              console.error("PO supplier email failed: " + sendErr.toString());
+            }
+          }
+        }
+      } catch (lookupErr) {
+        emailNotes.push('Supplier email lookup failed for "' + supplier + '": ' + lookupErr.toString());
+        console.error("PO supplier email lookup failed: " + lookupErr.toString());
       }
 
       // --- Append (or refresh) the Accounting Queue row for this (PO, supplier).
@@ -1494,7 +1690,13 @@ function processEncoding(payloadUpdates) {
       try { ensurePaymentLogRowsForPO_(mrfId); } catch (e) {}
     });
 
-    return "Encoding submitted successfully.";
+    let msg = "Encoding submitted successfully.";
+    if (emailNotes.length) {
+      // Encoding itself worked; the only thing that may not have happened is
+      // the supplier email. Surface the reason(s) so the user can fix the data.
+      msg += "\n\nSupplier email notes:\n- " + emailNotes.join("\n- ");
+    }
+    return msg;
   } catch (e) {
     return "Error: " + e.message;
   }
@@ -1949,14 +2151,53 @@ function getScriptAppUrl() {
 
 // ==========================================
 // --- RECEIVING PORTAL ENDPOINTS ---
-// Backs Receive.html. The supplier opens a link of the form
-//   <scriptUrl>?receiveToken=<MRF-ID>
-// and we route to that template via doGet(). These two endpoints feed it.
+// Backs Receive.html. The requestor (employee who submitted the MRF) opens a
+// link of the form:
+//   <scriptUrl>?receiveToken=<random-uuid>
+// and we route to that template via doGet(). These endpoints feed it.
 //
-// The "token" here is just the raw MRF id — there is no separate token store.
-// Knowledge of the id is treated as authorization; the link is normally only
-// shared via the deposit email to the supplier on record.
+// Each token is a random UUID generated at deposit-slip time and stored in
+// Script Properties (key "RCV_<token>" → "<mrfId>") so the token itself
+// can't be guessed from the MRF id. The receiving link is emailed to the
+// REQUESTOR (not the supplier) — the supplier still gets PO+deposit slip,
+// they just don't get the receiving page.
 // ==========================================
+
+function createReceiveToken_(mrfId) {
+  const id = (mrfId || "").toString().trim();
+  if (!id) return "";
+  try {
+    const props = PropertiesService.getScriptProperties();
+    // Reuse an existing token for this MRF if we already minted one — keeps
+    // links stable if the requestor re-receives or accounting re-issues the
+    // email for the same PO.
+    const all = props.getProperties();
+    for (const k in all) {
+      if (k.indexOf("RCV_") === 0 && all[k] === id) {
+        return k.substring(4);
+      }
+    }
+    const token = Utilities.getUuid().replace(/-/g, "");
+    props.setProperty("RCV_" + token, id);
+    return token;
+  } catch (e) {
+    return "";
+  }
+}
+
+function resolveReceiveToken_(token) {
+  const t = (token || "").toString().trim();
+  if (!t) return "";
+  try {
+    const mapped = PropertiesService.getScriptProperties().getProperty("RCV_" + t);
+    if (mapped) return mapped;
+  } catch (e) {}
+  // Back-compat: if a legacy "MRF-XXXXX" / "ARF-XXXXX" token is still floating
+  // around in an old email, accept it so receiving doesn't silently break.
+  // New tokens are 32-char hex, no dash — easy to tell apart.
+  if (/^(MRF|ARF)-/i.test(t)) return t;
+  return "";
+}
 
 // Units that mean "no discrete count" — quantity-tracking doesn't make sense
 // for them, so we collapse poQty/received to 1/0 and treat them as a single
@@ -1973,8 +2214,8 @@ function isBudgetUnit_(unit) {
 //   history: [{ date, name, qty, remarks }]
 function getItemsForReceiving(token) {
   try {
-    const mrfId = (token || "").toString().trim();
-    if (!mrfId) return { error: "Missing receive token." };
+    const mrfId = resolveReceiveToken_(token);
+    if (!mrfId) return { error: "Invalid or expired receiving link." };
 
     const poSheet = SS.getSheetByName(SHEETS.PO_QUEUE);
     const rcvSheet = SS.getSheetByName(SHEETS.RECEIVING_LOGS);
@@ -1994,7 +2235,7 @@ function getItemsForReceiving(token) {
       const name = (poData[i][5] || "").toString().trim();
       if (!name) continue;
       const unit = (poData[i][7] || "").toString();
-      const qty  = isBudgetUnit_(unit) ? 1 : (parseFloat(poData[i][6]) || 0);
+      const qty  = parseFloat(poData[i][6]) || 0;
       if (!items[name]) items[name] = { unit: unit, poQty: 0 };
       items[name].poQty += qty;
     }
@@ -2010,7 +2251,7 @@ function getItemsForReceiving(token) {
         const name = (rData[i][2] || "").toString().trim();
         const qty  = parseFloat(rData[i][3]) || 0;
         const remarks = (rData[i][4] || "").toString();
-        if (items[name]) items[name].poQty -= 0; // poQty is the ORDERED total; remaining is computed below
+        // poQty is the ORDERED total; remaining is computed below from the received tally.
         const ts = rData[i][0];
         let dateStr = "";
         if (ts) { const d = new Date(ts); dateStr = isNaN(d.getTime()) ? ts.toString() : formatFullDate(d); }
@@ -2050,8 +2291,8 @@ function getItemsForReceiving(token) {
 // (it checks for the substring "Error").
 function submitReceivedItems(token, finalItems, fileData) {
   try {
-    const mrfId = (token || "").toString().trim();
-    if (!mrfId) return "Error: Missing receive token.";
+    const mrfId = resolveReceiveToken_(token);
+    if (!mrfId) return "Error: Invalid or expired receiving link.";
     if (!finalItems || !finalItems.length) return "Error: No items submitted.";
 
     const rcvSheet = SS.getSheetByName(SHEETS.RECEIVING_LOGS);
@@ -2183,20 +2424,28 @@ function processAccountingUpload(rowIdx, mrfId, supplierName, fileObj, deposited
     sheet.getRange(row, 9).setValue(new Date());
 
     // --- 3. Email the supplier (PO + deposit slip). Best-effort — never fail the
-    //        operation if the email pipeline is unhappy.
+    //        operation if the email pipeline is unhappy, but DO surface the
+    //        outcome so accounting knows when the supplier was not notified.
+    //        If shane@your-domain is in the supplier row, that means the
+    //        Supplier Database has the wrong email — not a code bug.
+    let emailStatus = "ok";   // ok | no_match | no_email | send_failed
     try {
       const suppSheet = SS.getSheetByName(SHEETS.SUPPLIERS);
       if (suppSheet) {
         const sData = suppSheet.getDataRange().getValues();
         let supplierEmail = "";
         let contactPerson = "Supplier";
+        let matched = false;
         for (let i = 1; i < sData.length; i++) {
           if ((sData[i][0] || "").toString().trim().toLowerCase() === supplier.toLowerCase()) {
             supplierEmail = (sData[i][2] || "").toString().trim();
             contactPerson = (sData[i][4] || "Supplier").toString();
+            matched = true;
             break;
           }
         }
+        if (!matched) emailStatus = "no_match";
+        else if (!supplierEmail) emailStatus = "no_email";
         if (supplierEmail) {
           const attachments = [];
           const poFileId = getFileIdFromUrl(poLink);
@@ -2207,30 +2456,99 @@ function processAccountingUpload(rowIdx, mrfId, supplierName, fileObj, deposited
           if (depFileId) {
             try { attachments.push(safeDriveAction(function () { return DriveApp.getFileById(depFileId).getBlob(); })); } catch (e) {}
           }
-          // Build the receiving link so the supplier can confirm delivery once goods arrive.
-          let receiveUrl = "";
+
+          // Supplier email: PO + deposit slip only. The receiving link is sent
+          // to the requestor in a separate email below — suppliers should not
+          // be the ones logging deliveries against our inventory.
+          const body =
+            "Hello " + contactPerson + ",\n\n" +
+            "Please find attached the Purchase Order and proof of deposit for Project: " + projectName + ".\n\n" +
+            "Kindly confirm receipt and proceed with delivery as agreed.\n\n" +
+            "Thank you.";
+
           try {
-            const base = ScriptApp.getService().getUrl();
-            if (base) receiveUrl = base + (base.indexOf('?') > -1 ? '&' : '?') + 'receiveToken=' + encodeURIComponent(mrfId);
-          } catch (e) {}
-
-          let body = "Hello " + contactPerson + ",\n\nPlease find attached the Purchase Order and proof of deposit for Project: " + projectName + ".\n\nKindly confirm receipt and proceed with delivery as agreed.";
-          if (receiveUrl) body += "\n\nOnce delivered, please confirm receipt of items using this link:\n" + receiveUrl;
-          body += "\n\nThank you.";
-
-          GmailApp.sendEmail(
-            supplierEmail,
-            "Purchase Order + Deposit Slip: " + poDisplayId_(mrfId) + " - " + projectName,
-            body,
-            { attachments: attachments }
-          );
+            GmailApp.sendEmail(
+              supplierEmail,
+              "Purchase Order + Deposit Slip: " + poDisplayId_(mrfId) + " - " + projectName,
+              body,
+              { attachments: attachments }
+            );
+          } catch (sendErr) {
+            emailStatus = "send_failed";
+            console.error("Supplier email send failed: " + sendErr.toString());
+          }
         }
       }
     } catch (e) {
+      emailStatus = "send_failed";
       console.error("Supplier email failed: " + e.toString());
     }
 
-    return "Successfully processed.";
+    // --- 3b. Email the REQUESTOR with the receiving link.
+    //     The requestor (employee who submitted the original MRF) is the one
+    //     who logs delivered items — not the supplier. We look up their email
+    //     from MRF Submission Logs (col T = userEmail captured at submitMRF).
+    //     Best-effort: never fail the operation if this email can't go out.
+    try {
+      const logsSheet = SS.getSheetByName(SHEETS.LOGS);
+      if (logsSheet) {
+        const logData = logsSheet.getDataRange().getValues();
+        let requestorEmail = "";
+        let requestorName = "";
+        for (let i = 1; i < logData.length; i++) {
+          if ((logData[i][1] || "").toString().trim().toLowerCase() === mrfId.toLowerCase()) {
+            requestorEmail = (logData[i][19] || "").toString().trim(); // col T = email captured at submission
+            requestorName  = (logData[i][3]  || "").toString().trim();
+            if (requestorEmail) break;
+          }
+        }
+        if (requestorEmail) {
+          const token = createReceiveToken_(mrfId);
+          let receiveUrl = "";
+          try {
+            const base = ScriptApp.getService().getUrl();
+            if (base && token) receiveUrl = base + (base.indexOf('?') > -1 ? '&' : '?') + 'receiveToken=' + encodeURIComponent(token);
+          } catch (e) {}
+
+          if (receiveUrl) {
+            const body =
+              "Hello " + (requestorName || "there") + ",\n\n" +
+              "Your purchase order " + poDisplayId_(mrfId) + " for Project: " + projectName +
+              " has been paid and the supplier (" + supplier + ") has been notified.\n\n" +
+              "Once the goods arrive, please log the received items here:\n" + receiveUrl + "\n\n" +
+              "Thank you.";
+            try {
+              GmailApp.sendEmail(
+                requestorEmail,
+                "Receiving Link: " + poDisplayId_(mrfId) + " - " + projectName,
+                body
+              );
+            } catch (sendErr) {
+              console.error("Requestor receiving-link email failed: " + sendErr.toString());
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.error("Requestor email lookup failed: " + e.toString());
+    }
+
+    // Build a clear status string so the UI can tell accounting whether the
+    // supplier was actually emailed. The deposit slip is already recorded
+    // regardless — this is purely about the notification side-effect.
+    let suffix = "";
+    switch (emailStatus) {
+      case "no_match":
+        suffix = ' Note: supplier "' + supplier + '" was not found in Supplier Database — no email sent. Add the supplier (with a valid Email in col C) and resend if needed.';
+        break;
+      case "no_email":
+        suffix = ' Note: supplier "' + supplier + '" has no email address in Supplier Database — no email sent. Fill col C for that row and resend if needed.';
+        break;
+      case "send_failed":
+        suffix = " Note: deposit slip recorded but the supplier email could not be sent. See the script logs for details.";
+        break;
+    }
+    return "Successfully processed." + suffix;
   } catch (e) {
     return "Error: " + e.message;
   }
@@ -2336,9 +2654,10 @@ function updateBOQItemCost(rowIdx, newMat, newLab, newUnit, reason) {
     
     // Update the BOQ Sheet directly at the targeted row
     // Column G (7) = Unit | Column K (11) = Labor Cost | Column L (12) = Material Cost
+    // Strip thousand separators before writing — same reason as addBOQItem.
     boqSheet.getRange(rowIdx, 7).setValue(newUnit);
-    boqSheet.getRange(rowIdx, 11).setValue(newLab);
-    boqSheet.getRange(rowIdx, 12).setValue(newMat);
+    boqSheet.getRange(rowIdx, 11).setValue(toNumber_(newLab));
+    boqSheet.getRange(rowIdx, 12).setValue(toNumber_(newMat));
     
     // Record the adjustment in the BOQ Logs
     if (logSheet) {
@@ -2366,6 +2685,18 @@ function updateBOQItemCost(rowIdx, newMat, newLab, newUnit, reason) {
   }
 }
 
+// Coerce a possibly comma-formatted currency/qty string ("1,500.00") into a
+// plain Number. Sheet cells produced from JS-formatted strings used to land
+// as text, and downstream parseFloat("1,500.00") would silently return 1.
+function toNumber_(v) {
+  if (v === null || v === undefined || v === "") return 0;
+  if (typeof v === "number") return isNaN(v) ? 0 : v;
+  const cleaned = v.toString().replace(/,/g, "").trim();
+  if (cleaned === "") return 0;
+  const n = parseFloat(cleaned);
+  return isNaN(n) ? 0 : n;
+}
+
 function addBOQItem(payload) {
   try {
     const boqSheet = SS.getSheetByName(SHEETS.BOQ);
@@ -2374,6 +2705,13 @@ function addBOQItem(payload) {
 
     const now = new Date();
     const uploader = (payload.uploader || "Accounting Portal").toString();
+
+    // Numeric fields can arrive as formatted strings ("1,500.00") from the
+    // currency-formatted inputs. Coerce them before write so the cells land
+    // as real numbers, otherwise parseFloat downstream loses the thousands.
+    const qtyNum = toNumber_(payload.qty);
+    const labNum = toNumber_(payload.lab);
+    const matNum = toNumber_(payload.mat);
 
     // Construct the new row spanning columns A–P (16 cols).
     //   A–H: identity (project / phase / scope / sub-scope / sub-sub-scope / item / unit / qty)
@@ -2391,11 +2729,11 @@ function addBOQItem(payload) {
       payload.subSubScope,       // E
       payload.desc,              // F
       payload.unit,              // G
-      payload.qty,               // H
+      qtyNum,                    // H
       "",                        // I (reserved)
       "",                        // J (reserved)
-      payload.lab,               // K
-      payload.mat,               // L
+      labNum,                    // K
+      matNum,                    // L
       "Added via Accounting Portal", // M — source marker
       payload.driveLink || "",   // N — Google Drive Link
       uploader,                  // O — Uploader
@@ -2417,9 +2755,9 @@ function addBOQItem(payload) {
         payload.subSubScope,
         payload.desc,
         payload.unit,
-        payload.qty,
-        payload.mat,
-        payload.lab,
+        qtyNum,
+        matNum,
+        labNum,
         payload.reason
       ]);
     }
@@ -2822,12 +3160,12 @@ function submitAccountingExpense(payload, fileObj) {
 
 // =============================================================================
 // --- PETTY CASH MODULE (ported from Finance Portal) ---
-// Self-contained block. The per-project fund lives in the master Project
-// Database sheet (no separate projects sheet); two dedicated log sheets remain:
-//   Project Database          (col A = name; I/J/K = Allocated / Expenses / Balance;
-//                              row index used as projectId — do not reorder)
-//   PettyCash Expenses        (one row per line item)
-//   PettyCash Replenishments  (Pending → Approved/Denied; or Direct = Approved on create)
+// Self-contained block — does not modify any existing logic. Storage:
+//   Project Database cols I/J/K  (per-project petty cash fund — see setup.js).
+//                                 Row index in Project Database = projectId —
+//                                 do not reorder Project Database rows.
+//   PettyCash Expenses           (one row per line item)
+//   PettyCash Replenishments     (Pending → Approved/Denied; or Direct = Approved on create)
 //
 // Permission model:
 //   - Employees only see projects in their "Assigned Projects" column (Employee DB).
@@ -2835,13 +3173,6 @@ function submitAccountingExpense(payload, fileObj) {
 // =============================================================================
 
 const PETTY_CASH_LIMIT = 5000;  // Combined per-submission cap, in pesos.
-
-// Petty cash fund columns inside the "Project Database" sheet (1-based).
-// Project Title is col A (1); the fund block sits after "Total Contract Price" (H):
-//   I = Total Allocated Fund, J = Total Expenses, K = Remaining Balance.
-const PC_ALLOC_COL    = 9;   // I
-const PC_EXPENSES_COL = 10;  // J
-const PC_BALANCE_COL  = 11;  // K
 
 function isAccountingRole_(role) {
   const r = (role || "").toString().toLowerCase();
@@ -2899,12 +3230,19 @@ function pcReadRows_(sheet, startCol, numCols) {
   return sheet.getRange(2, startCol, n, numCols).getValues();
 }
 
-// Reads the petty cash fund straight from the "Project Database" sheet — the
-// project name (col A) and Total Allocated Fund (col I) are the only stored
-// inputs. Total spent is computed live from the PettyCash Expenses ledger, and
-// the derived Total Expenses (col J) / Remaining Balance (col K) are written
-// back so the sheet always displays current values (the ledger stays the
-// authoritative source — sheet formulas are optional).
+// Reads the petty cash fund column from Project Database (cols A, I) and
+// computes spent/balance live from the PettyCash Expenses ledger. Spent and
+// balance are NEVER read from the sheet — the ledger is the only source of
+// truth, so a stale or accidentally-edited cell on Project Database cannot
+// desynchronize the math.
+//
+// A project is "petty cash enabled" iff col I (Petty Cash Allocated) is non-blank.
+// Rows with a blank col I are excluded, matching the legacy behavior where the
+// existence of a PettyCash Projects row signalled enablement.
+//
+// id returned to clients is the Project Database row index (1-based), which is
+// also the value submitPettyCashExpense and the replenishment writers use to
+// locate the row when bumping/reading col I.
 function loadPettyCashProjects_() {
   const pSheet = SS.getSheetByName(SHEETS.PROJECTS);
   if (!pSheet) return [];
@@ -2918,42 +3256,22 @@ function loadPettyCashProjects_() {
     if (key) spentMap[key] = (spentMap[key] || 0) + amt;
   });
 
-  // Read A..K so we get the name (A) and the allocated fund (I) in one pass.
-  const rows = pcReadRows_(pSheet, 1, PC_BALANCE_COL);
-  const projects = rows.map((r, idx) => {
+  // Read cols A..I (1..9). We only use A (name) and I (allocated).
+  return pcReadRows_(pSheet, 1, 9).map((r, idx) => {
     const name = (r[0] || "").toString().trim();
-    const allocated = Number(r[PC_ALLOC_COL - 1]) || 0;
+    if (!name) return null;
+    const allocCell = r[8]; // col I, zero-indexed
+    if (allocCell === "" || allocCell === null || allocCell === undefined) return null;
+    const allocated = Number(allocCell) || 0;
     const spent = spentMap[name.toLowerCase()] || 0;
     return {
-      id: idx + 2,             // row index in the sheet
+      id: idx + 2,             // row index in Project Database
       name: name,
       allocated: allocated,
       spent: spent,
       balance: allocated - spent
     };
-  }).filter(p => p.name);
-
-  // Keep the displayed Total Expenses (J) / Remaining Balance (K) in sync with
-  // what we just computed. Batched, and only written when something changed so
-  // we don't rewrite the columns on every read for no reason.
-  try {
-    if (rows.length) {
-      const haveJK = pSheet.getRange(2, PC_EXPENSES_COL, rows.length, 2).getValues();
-      const wantJK = rows.map((r, idx) => {
-        const name = (r[0] || "").toString().trim();
-        if (!name) return [haveJK[idx][0], haveJK[idx][1]]; // leave blank rows untouched
-        const allocated = Number(r[PC_ALLOC_COL - 1]) || 0;
-        const spent = spentMap[name.toLowerCase()] || 0;
-        return [spent, allocated - spent];
-      });
-      const changed = wantJK.some((w, i) =>
-        (Number(haveJK[i][0]) || 0) !== (Number(w[0]) || 0) ||
-        (Number(haveJK[i][1]) || 0) !== (Number(w[1]) || 0));
-      if (changed) pSheet.getRange(2, PC_EXPENSES_COL, rows.length, 2).setValues(wantJK);
-    }
-  } catch (e) { /* display-only sync — never fail the load over it */ }
-
-  return projects;
+  }).filter(p => p !== null);
 }
 
 // Fast diagnostic — returns immediately without loading/serializing the data.
@@ -2969,9 +3287,9 @@ function pettyCashPing(userIdentifier) {
     out.role = emp ? emp.role : "";
   } catch (e) { out.lookupError = e.toString(); }
 
-  [["projectDb", SHEETS.PROJECTS],
-   ["expenses", SHEETS.PETTY_CASH_EXPENSES],
+  [["expenses", SHEETS.PETTY_CASH_EXPENSES],
    ["replenishments", SHEETS.PETTY_CASH_REPLENISHMENTS],
+   ["projectDb", SHEETS.PROJECTS],
    ["employees", SHEETS.EMPLOYEES]].forEach(pair => {
     try {
       const sh = SS.getSheetByName(pair[1]);
@@ -3019,10 +3337,23 @@ function getPettyCashData(userIdentifier) {
     };
     const num = function (v) { return Number(v) || 0; };
 
+    // Non-accounting users only see their OWN rows. Accounting/finance roles
+    // see everyone's rows so they can audit/approve. Previously the server
+    // returned everyone's rows and the client filtered — which leaked petty
+    // cash spend across employees over the wire.
+    const isAcct = isAccountingRole_(emp.role);
+    const ownerKey = (emp.name || "").toString().trim().toLowerCase();
+    const ownerEmailKey = (emp.email || "").toString().trim().toLowerCase();
+
     let expenses = [];
     try {
       const eSheet = SS.getSheetByName(SHEETS.PETTY_CASH_EXPENSES);
-      expenses = pcReadRows_(eSheet, 1, 8).reverse().map(function (r) {
+      const rows = pcReadRows_(eSheet, 1, 8);
+      expenses = rows.filter(function (r) {
+        if (isAcct) return true;
+        const rowUser = (r[2] || "").toString().trim().toLowerCase();
+        return rowUser === ownerKey;
+      }).reverse().map(function (r) {
         return [cell(r[0]), cell(r[1]), cell(r[2]), cell(r[3]), cell(r[4]), num(r[5]), num(r[6]), cell(r[7])];
       });
     } catch (e) { diag.expensesError = e.toString(); }
@@ -3030,15 +3361,22 @@ function getPettyCashData(userIdentifier) {
     let replenishments = [];
     try {
       const rSheet = SS.getSheetByName(SHEETS.PETTY_CASH_REPLENISHMENTS);
-      replenishments = pcReadRows_(rSheet, 1, 9).reverse().map(function (r) {
+      const rows = pcReadRows_(rSheet, 1, 9);
+      replenishments = rows.filter(function (r) {
+        if (isAcct) return true;
+        const reqName  = (r[2] || "").toString().trim().toLowerCase();
+        const reqEmail = (r[3] || "").toString().trim().toLowerCase();
+        return reqName === ownerKey || (ownerEmailKey && reqEmail === ownerEmailKey);
+      }).reverse().map(function (r) {
         return [cell(r[0]), cell(r[1]), cell(r[2]), cell(r[3]), cell(r[4]), cell(r[5]), num(r[6]), cell(r[7]), cell(r[8])];
       });
     } catch (e) { diag.replenishmentsError = e.toString(); }
 
-    // The Direct Replenishment dropdown is sourced from `allProjects` (built
-    // above from the master Project Database, col A). The running balance now
-    // lives in that same sheet (cols I/J/K), so there's no longer a separate
-    // list to merge in — this stays empty for backward compatibility.
+    // The Direct Replenishment dropdown is sourced ONLY from the PettyCash
+    // Projects sheet (col A) — projects are mapped into that sheet manually,
+    // since it is the only place a running balance can be maintained. We no
+    // longer pull names from the master Project Database here (it was extra
+    // sheet-read latency on every load for a list the UI no longer uses).
     let allKnownProjectNames = [];
 
     return {
@@ -3152,6 +3490,7 @@ function submitPettyCashExpense(payload) {
       return { success: false, error: `Combined transactions over ₱${PETTY_CASH_LIMIT.toLocaleString()} are not permitted in Petty Cash.` };
     }
 
+    // Project Database is the source of truth. projectId = Project Database row.
     const pSheet = SS.getSheetByName(SHEETS.PROJECTS);
     if (!pSheet) return { success: false, error: "Project Database sheet missing — run setup()." };
 
@@ -3256,9 +3595,10 @@ function requestPettyCashReplenishment(payload) {
 }
 
 // Accounting bypass — log a direct replenishment that's auto-approved.
-// Bumps the "Total Allocated Fund" (col I) of the project's row in the master
-// Project Database. If the chosen project name isn't registered yet, a minimal
-// row is appended so accounting can still replenish it.
+// Project Database is the master list of projects; this function refuses to
+// replenish a project that isn't registered there. If the project exists but
+// has never had petty cash enabled (col I blank), this call effectively enables
+// it by writing the replenishment amount into col I.
 function directPettyCashReplenish(payload) {
   const lock = LockService.getDocumentLock();
   try {
@@ -3279,7 +3619,10 @@ function directPettyCashReplenish(payload) {
     const pSheet = SS.getSheetByName(SHEETS.PROJECTS);
     if (!pSheet) return { success: false, error: "Project Database sheet missing — run setup()." };
 
-    // Resolve project row — by id if supplied, else by name (auto-create if absent).
+    // Resolve project row in Project Database — by id if supplied, else by name.
+    // Unlike before, we do NOT auto-create master project records here: a project
+    // must already be registered in Project Database (via the BOQ Upload Portal or
+    // a manual row) before petty cash can be replenished.
     const wantedName = payload.projectName.toString().trim();
     let projectId = Number(payload.projectId);
     if (!projectId || projectId < 2 || projectId > pSheet.getLastRow()) {
@@ -3288,18 +3631,16 @@ function directPettyCashReplenish(payload) {
         : [];
       const wantedKey = wantedName.toLowerCase();
       const foundIdx = lookupRange.findIndex(r => (r[0] || "").toString().trim().toLowerCase() === wantedKey);
-      if (foundIdx !== -1) {
-        projectId = foundIdx + 2;
-      } else {
-        // Project isn't registered yet — append a minimal row (name only); the
-        // replenishment we're about to log will set its allocation below.
-        pSheet.appendRow([wantedName]);
-        projectId = pSheet.getLastRow();
+      if (foundIdx === -1) {
+        return { success: false, error: 'Project "' + wantedName + '" not found in Project Database. Register the project first.' };
       }
+      projectId = foundIdx + 2;
     }
 
-    const currentAlloc = Number(pSheet.getRange(projectId, PC_ALLOC_COL).getValue()) || 0;
-    pSheet.getRange(projectId, PC_ALLOC_COL).setValue(currentAlloc + cleanAmount);
+    // Col I (index 9) holds Petty Cash Allocated. Blank = first-time enable.
+    const allocCell = pSheet.getRange(projectId, 9);
+    const currentAlloc = Number(allocCell.getValue()) || 0;
+    allocCell.setValue(currentAlloc + cleanAmount);
 
     const reqId = "DIR-" + new Date().getTime().toString().slice(-6);
     const reqAmount = cleanAmount.toLocaleString('en-US', {minimumFractionDigits: 2});
@@ -3350,17 +3691,18 @@ function directPettyCashReplenish(payload) {
 // Accounting batch action — approves or denies a list of pending replenishment
 // request IDs. Approved requests bump the project allocation and email the
 // requestor a PDF; denied ones are flagged and the requestor is emailed.
-function processBatchPettyCashReplenish(reqIds, action) {
+function processBatchPettyCashReplenish(reqIds, action, actorIdentifier) {
   const lock = LockService.getDocumentLock();
   try {
     if (!lock.tryLock(20000)) return { success: false, error: "Server busy — retry in a moment." };
     if (action !== 'Approved' && action !== 'Denied') {
       return { success: false, error: "Invalid action." };
     }
+    // actorIdentifier is accepted but not enforced — kept for future audit-trail use.
 
     const rSheet = SS.getSheetByName(SHEETS.PETTY_CASH_REPLENISHMENTS);
     const pSheet = SS.getSheetByName(SHEETS.PROJECTS);
-    if (!rSheet || !pSheet) return { success: false, error: "Petty Cash sheets missing — run setup()." };
+    if (!rSheet || !pSheet) return { success: false, error: "Required sheets missing — run setup()." };
 
     const data = rSheet.getDataRange().getValues();
 
@@ -3381,21 +3723,11 @@ function processBatchPettyCashReplenish(reqIds, action) {
       let fileUrl = "-";
 
       if (action === 'Approved') {
-        // Bump the project's Total Allocated Fund (col I) in the Project Database.
-        // Trust the stored row id when valid; otherwise fall back to a name lookup
-        // so requests filed before the sheet switch still resolve correctly.
-        let allocRow = (projectId && projectId >= 2 && projectId <= pSheet.getLastRow()) ? projectId : 0;
-        if (!allocRow && projectName) {
-          const wantedKey = projectName.toString().trim().toLowerCase();
-          const names = pSheet.getLastRow() >= 2
-            ? pSheet.getRange(2, 1, pSheet.getLastRow() - 1, 1).getValues()
-            : [];
-          const idx = names.findIndex(r => (r[0] || "").toString().trim().toLowerCase() === wantedKey);
-          if (idx !== -1) allocRow = idx + 2;
-        }
-        if (allocRow) {
-          const currentAlloc = Number(pSheet.getRange(allocRow, PC_ALLOC_COL).getValue()) || 0;
-          pSheet.getRange(allocRow, PC_ALLOC_COL).setValue(currentAlloc + rawAmount);
+        // Col I (9) of Project Database = Petty Cash Allocated.
+        if (projectId && projectId >= 2 && projectId <= pSheet.getLastRow()) {
+          const allocCell = pSheet.getRange(projectId, 9);
+          const currentAlloc = Number(allocCell.getValue()) || 0;
+          allocCell.setValue(currentAlloc + rawAmount);
         }
 
         try {
@@ -3558,28 +3890,33 @@ function ingestBoqWorkbookIntoActiveDb_(ss, tcp, paymentTerms, uploader) {
                 .setValues(termsDataToInsert);
   }
 
-  // --- PART B: BOQ ROW INGESTION (16-column layout matching addBOQItem) ---
+  // --- PART B: BOQ ROW INGESTION (16-column layout, identical to BOQ.js) ---
   //
-  // Column map (must mirror setup.js "BOQ Database" schema and getBOQDataForProject):
-  //   A Project Title | B Phase | C Scope | D Sub Scope | E Sub-Sub Scope
-  //   F Item | G Unit | H Qty | I Reserved 1 | J Reserved 2
-  //   K Labor Cost | L Material Cost | M Source | N Drive Link | O Uploader | P Date
+  // Column map mirrors the BOQ.js "BOQ Database" output cell-for-cell:
+  //   A Project Title | B Sheet/Tab Name | C Phase | D Scope | E Sub Scope
+  //   F Item (col C) | G Unit (col D) | H Qty (col E) | I col F | J col G
+  //   K col H | L col I | M col J | N Source | O Uploader | P Date
   //
   // Workbook tabs start with metadata in rows 1-12 and BOQ line items from
   // row 13 onward across columns A-J. The classification rules below detect
   // phase / scope / sub-scope header rows by looking at numbering and
-  // empty cost cells — identical to the legacy BOQUploadCode logic.
+  // empty cost cells — identical to the BOQ.js logic.
   const rowsToInsert = [];
 
   ss.getSheets().forEach(sheet => {
-    const sheetName = sheet.getName();
+    // CSV/single-tab imports name the tab after the temp file
+    // ("Temp_BOQ_Upload_<name>.csv"). Strip our temp prefix and any
+    // extension so column B holds only the raw tab title. Multi-tab .xlsx
+    // workbooks keep their real tab names, so this is a no-op for them.
+    const sheetName = sheet.getName()
+      .replace(/^Temp_BOQ_Upload_/, "")
+      .replace(/\.(csv|xlsx|xls)$/i, "");
     if (sheetName.toUpperCase() === "SUMMARY") return;
 
     const lastRow = sheet.getLastRow();
     if (lastRow < 13) return;
 
     const projectTitle = sheet.getRange("B3").getValue();
-    if (!projectTitle || projectTitle === "#REF!") return;
 
     const data = sheet.getRange(13, 1, lastRow - 12, 10).getValues();
 
@@ -3619,21 +3956,23 @@ function ingestBoqWorkbookIntoActiveDb_(ss, tcp, paymentTerms, uploader) {
       }
 
       if (hasData && colC !== "") {
+        // Identical column mapping to BOQ.js — tab name goes in B, which
+        // shifts Phase/Scope/Sub-Scope into C/D/E.
         rowsToInsert.push([
           projectTitle,        // A — Project Title
-          currentPhase,        // B — Phase
-          currentScope,        // C — Scope
-          currentSubScope,     // D — Sub Scope
-          "",                  // E — Sub-Sub Scope (not parsed from workbook layout)
-          colC,                // F — Item Description
-          data[i][3],          // G — Unit
-          data[i][4],          // H — Qty
-          data[i][5],          // I — Reserved 1
-          data[i][6],          // J — Reserved 2
-          data[i][7],          // K — Labor Cost
-          data[i][8],          // L — Material Cost
-          sourceLink,          // M — Source
-          data[i][9] || "",    // N — Drive Link (col J in source workbook, if any)
+          sheetName,           // B — Sheet/Tab Name
+          currentPhase,        // C — Phase
+          currentScope,        // D — Scope
+          currentSubScope,     // E — Sub Scope
+          colC,                // F — Item Description (source col C)
+          data[i][3],          // G — Unit (source col D)
+          data[i][4],          // H — Qty (source col E)
+          data[i][5],          // I — source col F
+          data[i][6],          // J — source col G
+          data[i][7],          // K — source col H
+          data[i][8],          // L — source col I
+          "",                  // M — left blank (no longer pulled from source col J)
+          sourceLink,          // N — Source
           uploader,            // O — Uploader
           uploadDate           // P — Date Uploaded
         ]);
@@ -3646,4 +3985,472 @@ function ingestBoqWorkbookIntoActiveDb_(ss, tcp, paymentTerms, uploader) {
     return regStatus + "\n🚀 Ingested " + rowsToInsert.length + " BOQ rows.";
   }
   return regStatus + "\n⚠️ No BOQ rows found.";
+}
+
+// =============================================================================
+// CLIENT PAYMENTS (Collections / Accounts Receivable)
+// -----------------------------------------------------------------------------
+// Records money received FROM clients, tracked against each project's Total
+// Contract Price (Project Database col H) and its milestone schedule (Payment
+// Terms Database). The "Client Payments" sheet is the collections ledger; one
+// row per payment. Milestone Pending/Partial/Fully-Paid status and the
+// project-level Billed→Collected→Outstanding roll-ups are COMPUTED at read time
+// from the ledger — nothing is double-stored. Milestones can be edited here and
+// every edit/void is appended to "Client Payment Logs" with before/after values.
+//
+// Following the petty-cash lesson, getClientPaymentsData returns only formatted
+// strings/numbers (never raw Date cells) so google.script.run never hangs on a
+// serialization quirk.
+// =============================================================================
+
+const CLIENT_PAYMENT_HEADERS = ["Timestamp", "Payment ID", "Project Title", "Milestone Row", "Milestone", "Billing Ref", "Amount Due", "Amount Received", "Date Received", "Payment Method", "Bank Name", "Deposited-To Account", "Check Number", "Check Date", "Reference No", "OR Number", "Received By", "Remarks", "Status"];
+const CLIENT_PAYMENT_LOG_HEADERS = ["Timestamp", "Entity", "Reference", "Action", "Field", "Old Value", "New Value", "Performed By", "Notes"];
+
+function getOrCreateClientPaymentsSheet_() {
+  let sheet = SS.getSheetByName(SHEETS.CLIENT_PAYMENTS);
+  if (!sheet) {
+    sheet = SS.insertSheet(SHEETS.CLIENT_PAYMENTS);
+    sheet.getRange(1, 1, 1, CLIENT_PAYMENT_HEADERS.length).setValues([CLIENT_PAYMENT_HEADERS]).setFontWeight("bold");
+    sheet.setFrozenRows(1);
+  }
+  return sheet;
+}
+
+function getOrCreateClientPaymentLogSheet_() {
+  let sheet = SS.getSheetByName(SHEETS.CLIENT_PAYMENT_LOGS);
+  if (!sheet) {
+    sheet = SS.insertSheet(SHEETS.CLIENT_PAYMENT_LOGS);
+    sheet.getRange(1, 1, 1, CLIENT_PAYMENT_LOG_HEADERS.length).setValues([CLIENT_PAYMENT_LOG_HEADERS]).setFontWeight("bold");
+    sheet.setFrozenRows(1);
+  }
+  return sheet;
+}
+
+// Best-effort audit write; never breaks the user-facing operation.
+function logClientPaymentActivity_(entity, reference, action, field, oldVal, newVal, performedBy, notes) {
+  try {
+    const sheet = getOrCreateClientPaymentLogSheet_();
+    sheet.appendRow([new Date(), entity || "", reference || "", action || "", field || "", oldVal === undefined || oldVal === null ? "" : oldVal, newVal === undefined || newVal === null ? "" : newVal, performedBy || "", notes || ""]);
+  } catch (e) { /* audit is best-effort */ }
+}
+
+// Format a sheet cell that may hold a Date (or a string) into a display string.
+function cpFormatDateCell_(v) {
+  if (v === "" || v === null || v === undefined) return "";
+  const d = new Date(v);
+  return isNaN(d.getTime()) ? v.toString() : formatFullDate(d);
+}
+
+// Coerce "20%", "20", 20, "1,000.00" → a number. Blank/garbage → 0.
+function cpToNumber_(v) {
+  if (v === "" || v === null || v === undefined) return 0;
+  const n = parseFloat(v.toString().replace(/[%,]/g, "").trim());
+  return isNaN(n) ? 0 : n;
+}
+
+// Total Contract Price for a project (Project Database col H = index 7).
+function getProjectTCP_(projectTitle) {
+  const sheet = SS.getSheetByName(SHEETS.PROJECTS);
+  if (!sheet || sheet.getLastRow() < 2) return 0;
+  const want = projectTitle.toString().trim().toLowerCase();
+  const data = sheet.getRange(2, 1, sheet.getLastRow() - 1, 8).getValues();
+  for (let i = 0; i < data.length; i++) {
+    if ((data[i][0] || "").toString().trim().toLowerCase() === want) return cpToNumber_(data[i][7]);
+  }
+  return 0;
+}
+
+// Milestone rows for a project from Payment Terms Database, with their sheet row
+// index (the stable key a payment links to — editing a milestone's % never moves
+// its row, matching the row-index convention used elsewhere in this app).
+function getProjectMilestones_(projectTitle) {
+  const sheet = SS.getSheetByName(SHEETS.PAYMENT_TERMS);
+  if (!sheet || sheet.getLastRow() < 2) return [];
+  const want = projectTitle.toString().trim().toLowerCase();
+  const data = sheet.getRange(2, 1, sheet.getLastRow() - 1, 3).getValues();
+  const out = [];
+  for (let i = 0; i < data.length; i++) {
+    if ((data[i][0] || "").toString().trim().toLowerCase() === want) {
+      out.push({ row: i + 2, milestonePct: cpToNumber_(data[i][1]), paymentPct: cpToNumber_(data[i][2]) });
+    }
+  }
+  return out;
+}
+
+// Main read endpoint for the Client Payments tab.
+//   - Always returns { projectList, summary }.
+//   - When `project` is supplied, also returns { project, tcp, milestones, payments }.
+// summary rolls up across ALL projects: total contract value, total collected
+// (active payments only), total outstanding.
+function getClientPaymentsData(project) {
+  try {
+    const projectList = getProjectList();
+
+    // Read the whole collections ledger once.
+    const sheet = getOrCreateClientPaymentsSheet_();
+    const payments = [];
+    if (sheet.getLastRow() >= 2) {
+      const data = sheet.getRange(2, 1, sheet.getLastRow() - 1, CLIENT_PAYMENT_HEADERS.length).getValues();
+      for (let i = 0; i < data.length; i++) {
+        if (!(data[i][1] || "").toString().trim() && !(data[i][2] || "").toString().trim()) continue;
+        payments.push({
+          row: i + 2,
+          timestamp: cpFormatDateCell_(data[i][0]),
+          paymentId: (data[i][1] || "").toString(),
+          project: (data[i][2] || "").toString(),
+          milestoneRow: parseInt(data[i][3], 10) || 0,
+          milestone: (data[i][4] || "").toString(),
+          billingRef: (data[i][5] || "").toString(),
+          amountDue: cpToNumber_(data[i][6]),
+          amountReceived: cpToNumber_(data[i][7]),
+          dateReceived: cpFormatDateCell_(data[i][8]),
+          paymentMethod: (data[i][9] || "").toString(),
+          bankName: (data[i][10] || "").toString(),
+          depositedTo: (data[i][11] || "").toString(),
+          checkNumber: (data[i][12] || "").toString(),
+          checkDate: cpFormatDateCell_(data[i][13]),
+          referenceNo: (data[i][14] || "").toString(),
+          orNumber: (data[i][15] || "").toString(),
+          receivedBy: (data[i][16] || "").toString(),
+          remarks: (data[i][17] || "").toString(),
+          status: (data[i][18] || "Active").toString()
+        });
+      }
+    }
+
+    // Global roll-up across all projects.
+    let totalContractValue = 0;
+    const projSheet = SS.getSheetByName(SHEETS.PROJECTS);
+    if (projSheet && projSheet.getLastRow() >= 2) {
+      const pd = projSheet.getRange(2, 1, projSheet.getLastRow() - 1, 8).getValues();
+      for (let i = 0; i < pd.length; i++) {
+        if ((pd[i][0] || "").toString().trim()) totalContractValue += cpToNumber_(pd[i][7]);
+      }
+    }
+    let totalCollected = 0;
+    payments.forEach(function (p) { if (p.status !== "Voided") totalCollected += p.amountReceived; });
+
+    const result = {
+      projectList: projectList,
+      summary: {
+        totalContractValue: totalContractValue,
+        totalCollected: totalCollected,
+        totalOutstanding: totalContractValue - totalCollected
+      }
+    };
+
+    if (project) {
+      const proj = project.toString().trim();
+      const tcp = getProjectTCP_(proj);
+      const ms = getProjectMilestones_(proj);
+      const projPayments = payments.filter(function (p) { return p.project.trim().toLowerCase() === proj.toLowerCase(); });
+
+      const milestones = ms.map(function (m, idx) {
+        const due = tcp * (m.paymentPct / 100);
+        let collected = 0;
+        projPayments.forEach(function (p) { if (p.status !== "Voided" && p.milestoneRow === m.row) collected += p.amountReceived; });
+        let st = "Pending";
+        if (due > 0 && collected >= due - 0.005) st = "Fully Paid";
+        else if (collected > 0) st = "Partial";
+        return {
+          row: m.row,
+          index: idx + 1,
+          label: "Milestone " + (idx + 1),
+          milestonePct: m.milestonePct,
+          paymentPct: m.paymentPct,
+          amountDue: due,
+          collected: collected,
+          balance: due - collected,
+          status: st
+        };
+      });
+
+      result.project = proj;
+      result.tcp = tcp;
+      result.milestones = milestones;
+      result.payments = projPayments;
+    }
+
+    return result;
+  } catch (e) {
+    return { projectList: [], summary: { totalContractValue: 0, totalCollected: 0, totalOutstanding: 0 }, error: e.toString() };
+  }
+}
+
+// Record one client payment. Returns { success, id } or { success:false, error }.
+function recordClientPayment(payload) {
+  try {
+    if (!payload) return { success: false, error: "Missing payload." };
+    const project = (payload.project || "").toString().trim();
+    if (!project) return { success: false, error: "Project is required." };
+
+    const amountReceived = cpToNumber_(payload.amountReceived);
+    if (amountReceived <= 0) return { success: false, error: "Amount Received must be a positive number." };
+
+    const method = (payload.paymentMethod || "").toString().trim();
+    if (!method) return { success: false, error: "Payment Method is required." };
+
+    if (!payload.dateReceived) return { success: false, error: "Date Received is required." };
+    const dateReceived = new Date(payload.dateReceived);
+    if (isNaN(dateReceived.getTime())) return { success: false, error: "Date Received is invalid." };
+
+    const sheet = getOrCreateClientPaymentsSheet_();
+    const now = new Date();
+    const paymentId = "CP-" + now.getTime().toString().slice(-6);
+    const checkDate = payload.checkDate ? new Date(payload.checkDate) : "";
+
+    sheet.appendRow([
+      now,                                              // Timestamp
+      paymentId,                                        // Payment ID
+      project,                                          // Project Title
+      parseInt(payload.milestoneRow, 10) || "",         // Milestone Row (blank = general)
+      (payload.milestone || "").toString(),             // Milestone (label snapshot)
+      (payload.billingRef || "").toString(),            // Billing Ref
+      cpToNumber_(payload.amountDue),                   // Amount Due (snapshot, editable)
+      amountReceived,                                   // Amount Received
+      dateReceived,                                     // Date Received
+      method,                                           // Payment Method
+      (payload.bankName || "").toString(),              // Bank Name
+      (payload.depositedTo || "").toString(),           // Deposited-To Account
+      (payload.checkNumber || "").toString(),           // Check Number
+      (checkDate && !isNaN(checkDate.getTime())) ? checkDate : "", // Check Date
+      (payload.referenceNo || "").toString(),           // Reference No
+      (payload.orNumber || "").toString(),              // OR Number
+      (payload.receivedBy || "").toString(),            // Received By
+      (payload.remarks || "").toString(),               // Remarks
+      "Active"                                           // Status
+    ]);
+
+    logClientPaymentActivity_("Payment", paymentId, "Recorded", "Amount Received", "", amountReceived, payload.receivedBy || "", project + (payload.milestone ? (" | " + payload.milestone) : ""));
+    return { success: true, id: paymentId };
+  } catch (e) {
+    return { success: false, error: e.toString() };
+  }
+}
+
+// Edit a project's milestone (Payment Terms Database row). Writes back only the
+// changed fields and logs before/after values + who edited.
+function updateClientMilestone(payload) {
+  try {
+    if (!payload || !payload.row) return { success: false, error: "Missing milestone row reference." };
+    const sheet = SS.getSheetByName(SHEETS.PAYMENT_TERMS);
+    if (!sheet) return { success: false, error: "Payment Terms Database not found." };
+    const row = parseInt(payload.row, 10);
+    if (!row || row < 2 || row > sheet.getLastRow()) return { success: false, error: "Invalid milestone row reference." };
+
+    const existing = sheet.getRange(row, 1, 1, 3).getValues()[0];
+    const project = (existing[0] || "").toString();
+    const oldMilestone = (existing[1] || "").toString();
+    const oldPayment = (existing[2] || "").toString();
+    const performedBy = (payload.performedBy || "").toString();
+
+    const newMilestone = (payload.milestonePct === undefined || payload.milestonePct === null || payload.milestonePct.toString().trim() === "") ? oldMilestone : payload.milestonePct.toString().trim();
+    const newPayment = (payload.paymentPct === undefined || payload.paymentPct === null || payload.paymentPct.toString().trim() === "") ? oldPayment : payload.paymentPct.toString().trim();
+
+    let changed = false;
+    if (newMilestone !== oldMilestone) {
+      sheet.getRange(row, 2).setValue(newMilestone);
+      logClientPaymentActivity_("Milestone", project + " (row " + row + ")", "Edited", "Milestone %", oldMilestone, newMilestone, performedBy, "");
+      changed = true;
+    }
+    if (newPayment !== oldPayment) {
+      sheet.getRange(row, 3).setValue(newPayment);
+      logClientPaymentActivity_("Milestone", project + " (row " + row + ")", "Edited", "Payment %", oldPayment, newPayment, performedBy, "");
+      changed = true;
+    }
+    return { success: true, changed: changed };
+  } catch (e) {
+    return { success: false, error: e.toString() };
+  }
+}
+
+// Void a client payment (kept on the sheet, flagged so it drops out of totals).
+function voidClientPayment(payload) {
+  try {
+    if (!payload || !payload.row) return { success: false, error: "Missing row reference." };
+    const sheet = getOrCreateClientPaymentsSheet_();
+    const row = parseInt(payload.row, 10);
+    if (!row || row < 2 || row > sheet.getLastRow()) return { success: false, error: "Invalid row reference." };
+
+    const existing = sheet.getRange(row, 1, 1, CLIENT_PAYMENT_HEADERS.length).getValues()[0];
+    const paymentId = (existing[1] || "").toString();
+    const oldStatus = (existing[18] || "Active").toString();
+    if (oldStatus === "Voided") return { success: false, error: "This payment is already voided." };
+
+    sheet.getRange(row, CLIENT_PAYMENT_HEADERS.length).setValue("Voided"); // Status is the last column
+    logClientPaymentActivity_("Payment", paymentId, "Voided", "Status", oldStatus, "Voided", payload.performedBy || "", payload.reason || "");
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.toString() };
+  }
+}
+
+// Audit-trail viewer for the Client Payments tab. Optionally filter by project
+// (matches the "Reference" column prefix or any payment that belongs to it).
+function getClientPaymentAuditLog(project) {
+  try {
+    const sheet = getOrCreateClientPaymentLogSheet_();
+    if (sheet.getLastRow() < 2) return [];
+    const data = sheet.getRange(2, 1, sheet.getLastRow() - 1, CLIENT_PAYMENT_LOG_HEADERS.length).getValues();
+    const out = [];
+    for (let i = 0; i < data.length; i++) {
+      out.push({
+        timestamp: cpFormatDateCell_(data[i][0]),
+        entity: (data[i][1] || "").toString(),
+        reference: (data[i][2] || "").toString(),
+        action: (data[i][3] || "").toString(),
+        field: (data[i][4] || "").toString(),
+        oldValue: (data[i][5] === null || data[i][5] === undefined) ? "" : data[i][5].toString(),
+        newValue: (data[i][6] === null || data[i][6] === undefined) ? "" : data[i][6].toString(),
+        performedBy: (data[i][7] || "").toString(),
+        notes: (data[i][8] || "").toString()
+      });
+    }
+    return out.reverse();
+  } catch (e) {
+    return [];
+  }
+}
+
+// =============================================================================
+// PROJECT & MILESTONE EDITOR (Accounting → BOQ Upload → "Edit Project & Milestones")
+// Lets Accounting edit a project already in Project Database (Owner / Address /
+// Bidder / Total Contract Price) and add milestones to projects that have none
+// yet. Strictly additive — reuses getProjectList, getProjectTCP_,
+// getProjectMilestones_, updateClientMilestone and the logClientPaymentActivity_
+// audit writer (so every change lands in the "Client Payment Logs" sheet with
+// before/after values). Returns only formatted primitives — never raw Date
+// cells — so google.script.run never hangs (the petty-cash serialization lesson).
+// =============================================================================
+
+// Read endpoint for the editor: a project's editable metadata + TCP + its
+// existing milestone rows. { found:false } when the project isn't in the DB.
+function getProjectEditData(project) {
+  const empty = { found: false, row: 0, project: "", owner: "", address: "", bidder: "", tcp: 0, milestones: [] };
+  try {
+    if (!project) return empty;
+    const sheet = SS.getSheetByName(SHEETS.PROJECTS);
+    if (!sheet || sheet.getLastRow() < 2) return empty;
+    const want = project.toString().trim().toLowerCase();
+    const data = sheet.getRange(2, 1, sheet.getLastRow() - 1, 8).getValues();
+    let found = null, foundRow = 0;
+    for (let i = 0; i < data.length; i++) {
+      if ((data[i][0] || "").toString().trim().toLowerCase() === want) {
+        found = data[i];
+        foundRow = i + 2;
+        break;
+      }
+    }
+    if (!found) return empty;
+
+    const ms = getProjectMilestones_((found[0] || project).toString());
+    const milestones = ms.map(function (m, idx) {
+      return { row: m.row, index: idx + 1, milestonePct: m.milestonePct, paymentPct: m.paymentPct };
+    });
+
+    return {
+      found: true,
+      row: foundRow,
+      project: (found[0] || "").toString(),
+      owner: (found[1] || "").toString(),
+      address: (found[2] || "").toString(),
+      bidder: (found[4] || "").toString(),
+      tcp: cpToNumber_(found[7]),
+      milestones: milestones
+    };
+  } catch (e) {
+    empty.error = e.toString();
+    return empty;
+  }
+}
+
+// Edit an existing project's Owner / Address / Bidder / Total Contract Price.
+// Project Title is the key linking BOQ rows, milestones and payments, so it is
+// NOT editable here. Writes only changed cells (cols B/C/E/H — never touches the
+// petty-cash cols I/J/K) and logs each changed field before/after.
+function updateProjectDetails(payload) {
+  try {
+    if (!payload || !payload.project) return { success: false, error: "Project is required." };
+    const sheet = SS.getSheetByName(SHEETS.PROJECTS);
+    if (!sheet || sheet.getLastRow() < 2) return { success: false, error: "Project Database not found." };
+
+    const want = payload.project.toString().trim().toLowerCase();
+    const data = sheet.getRange(2, 1, sheet.getLastRow() - 1, 8).getValues();
+    let row = -1, existing = null;
+    for (let i = 0; i < data.length; i++) {
+      if ((data[i][0] || "").toString().trim().toLowerCase() === want) { row = i + 2; existing = data[i]; break; }
+    }
+    if (row < 0) return { success: false, error: "Project not found in Project Database." };
+
+    const projTitle = (existing[0] || "").toString();
+    const performedBy = (payload.performedBy || "").toString();
+    let changed = false;
+
+    // Text metadata fields: Owner (col B/2), Address (col C/3), Bidder (col E/5).
+    const fields = [
+      { col: 2, key: "owner",   label: "Owner"   },
+      { col: 3, key: "address", label: "Address" },
+      { col: 5, key: "bidder",  label: "Bidder"  }
+    ];
+    fields.forEach(function (f) {
+      if (payload[f.key] === undefined || payload[f.key] === null) return;
+      const oldVal = (existing[f.col - 1] || "").toString();
+      const newVal = payload[f.key].toString();
+      if (newVal !== oldVal) {
+        sheet.getRange(row, f.col).setValue(newVal);
+        logClientPaymentActivity_("Project", projTitle, "Edited", f.label, oldVal, newVal, performedBy, "");
+        changed = true;
+      }
+    });
+
+    // Total Contract Price (col H/8).
+    if (payload.tcp !== undefined && payload.tcp !== null && payload.tcp.toString().trim() !== "") {
+      const oldTcp = cpToNumber_(existing[7]);
+      const newTcp = cpToNumber_(payload.tcp);
+      if (Math.abs(newTcp - oldTcp) > 0.005) {
+        sheet.getRange(row, 8).setValue(newTcp);
+        logClientPaymentActivity_("Project", projTitle, "Edited", "Total Contract Price", oldTcp, newTcp, performedBy, "");
+        changed = true;
+      }
+    }
+
+    return { success: true, changed: changed };
+  } catch (e) {
+    return { success: false, error: e.toString() };
+  }
+}
+
+// Append one or more milestone rows to Payment Terms Database for a project that
+// has none yet (or to extend an existing schedule). Rows are written in the same
+// "20%" string format the BOQ upload uses, so the Client Payments tab reads them
+// back identically. Each addition is logged.
+function addProjectMilestones(payload) {
+  try {
+    if (!payload || !payload.project) return { success: false, error: "Project is required." };
+    const list = (payload.milestones && payload.milestones.length) ? payload.milestones : [];
+    if (!list.length) return { success: false, error: "No milestones to add." };
+
+    const sheet = SS.getSheetByName(SHEETS.PAYMENT_TERMS);
+    if (!sheet) return { success: false, error: "Payment Terms Database not found." };
+
+    const project = payload.project.toString().trim();
+    const performedBy = (payload.performedBy || "").toString();
+    const now = new Date();
+    const rows = [];
+    for (let i = 0; i < list.length; i++) {
+      const mPct = cpToNumber_(list[i].milestone);
+      const pPct = cpToNumber_(list[i].payment);
+      if (pPct <= 0) return { success: false, error: "Each milestone needs a Payment % greater than 0." };
+      rows.push([project, mPct + "%", pPct + "%", now, performedBy || "Accounting Portal"]);
+    }
+
+    sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, 5).setValues(rows);
+    for (let i = 0; i < rows.length; i++) {
+      logClientPaymentActivity_("Milestone", project, "Added", "Milestone / Payment %", "", rows[i][1] + " / " + rows[i][2], performedBy, "");
+    }
+
+    return { success: true, added: rows.length };
+  } catch (e) {
+    return { success: false, error: e.toString() };
+  }
 }

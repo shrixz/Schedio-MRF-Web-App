@@ -29,7 +29,7 @@
   <div class="card shadow-sm p-4" style="width: 100%; max-width: 900px; border-top: 5px solid #212529;">
     
     <h3 class="fw-bold text-dark text-center text-uppercase">Confirm Delivery</h3>
-    <p class="text-muted text-center fw-bold mb-4" id="mrf-subtitle">MRF REFERENCE: <?= receiveToken ?></p>
+    <p class="text-muted text-center fw-bold mb-4" id="mrf-subtitle">MRF REFERENCE: <?= mrfReference ?></p>
 
     <div class="table-responsive">
        <table class="table table-bordered table-sm align-middle">
@@ -78,20 +78,47 @@
 </div>
 
 <script>
+  // doGet() sanitizes receiveToken to [A-Za-z0-9-] before this template
+  // renders and resolveReceiveToken_() validates it against the Properties
+  // map, so it never contains characters that could break the JS string.
   const RECEIVE_TOKEN = "<?= receiveToken ?>";
+  const TOKEN_VALID = <?= (typeof tokenValid !== "undefined" && tokenValid) ? "true" : "false" ?>;
   let itemsData = [];
   let historyData = [];
 
-  window.onload = () => { loadData(); };
+  // Same HTML-escape helper used in the other portals — sheet-driven item
+  // names, remarks, dates etc. can contain characters that break out of
+  // HTML context.
+  function escAttr(v) {
+    if (v === null || v === undefined) return '';
+    return v.toString()
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+  function escHtml(v) { return escAttr(v); }
+
+  window.onload = () => {
+    if (!TOKEN_VALID || !RECEIVE_TOKEN) {
+      document.getElementById('loader').style.display = 'none';
+      document.getElementById('receive-item-body').innerHTML = '<tr><td colspan="6" class="text-danger text-center fw-bold py-4">This receiving link is invalid or expired. Please request a new one.</td></tr>';
+      document.getElementById('submitBtn').style.display = 'none';
+      document.getElementById('dr-file').disabled = true;
+      return;
+    }
+    loadData();
+  };
 
   function loadData() {
     document.getElementById('loader').style.display = 'flex';
-    
+
     google.script.run
       .withSuccessHandler(res => {
         document.getElementById('loader').style.display = 'none';
         if (res.error) {
-          document.getElementById('receive-item-body').innerHTML = `<tr><td colspan="6" class="text-danger text-center fw-bold py-4">${res.error}</td></tr>`;
+          document.getElementById('receive-item-body').innerHTML = `<tr><td colspan="6" class="text-danger text-center fw-bold py-4">${escHtml(res.error)}</td></tr>`;
           document.getElementById('submitBtn').style.display = 'none';
           document.getElementById('dr-file').disabled = true;
         } else {
@@ -125,12 +152,12 @@
 
       return `
       <tr class="${rowClass}">
-        <td class="fw-bold">${it.name}</td>
-        <td class="text-center">${it.unit}</td>
-        <td class="text-center">${it.poQty}</td>
-        <td class="text-center fw-bold ${isComplete ? 'text-success' : 'text-primary'}">${it.remaining}</td>
-        <td><input type="number" class="form-control form-control-sm rcv-qty text-center" data-idx="${idx}" placeholder="0" min="0" max="${it.remaining}" ${disableInput}></td>
-        <td><input type="text" class="form-control form-control-sm rcv-rem" data-idx="${idx}" placeholder="Remarks..." ${disableInput}></td>
+        <td class="fw-bold">${escHtml(it.name)}</td>
+        <td class="text-center">${escHtml(it.unit)}</td>
+        <td class="text-center">${escHtml(it.poQty)}</td>
+        <td class="text-center fw-bold ${isComplete ? 'text-success' : 'text-primary'}">${escHtml(it.remaining)}</td>
+        <td><input type="number" class="form-control form-control-sm rcv-qty text-center" data-idx="${escAttr(idx)}" placeholder="0" min="0" max="${escAttr(it.remaining)}" ${disableInput}></td>
+        <td><input type="text" class="form-control form-control-sm rcv-rem" data-idx="${escAttr(idx)}" placeholder="Remarks..." ${disableInput}></td>
       </tr>
     `}).join('');
   }
@@ -145,14 +172,14 @@
     }
     
     section.style.display = 'block';
-    body.innerHTML = historyData.map(log => `
+    body.innerHTML = historyData.slice().reverse().map(log => `
       <tr>
-        <td><span class="badge bg-secondary">${log.date}</span></td>
-        <td class="fw-bold">${log.name}</td>
-        <td class="text-center fw-bold text-success">+${log.qty}</td>
-        <td>${log.remarks || '-'}</td>
+        <td><span class="badge bg-secondary">${escHtml(log.date)}</span></td>
+        <td class="fw-bold">${escHtml(log.name)}</td>
+        <td class="text-center fw-bold text-success">+${escHtml(log.qty)}</td>
+        <td>${escHtml(log.remarks || '-')}</td>
       </tr>
-    `).reverse().join(''); 
+    `).join('');
   }
 
   function submitReceiving() {

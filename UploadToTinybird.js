@@ -1,5 +1,12 @@
 /**
  * TINYBIRD CONFIGURATION FOR MRF SYSTEM
+ *
+ * NOTE: The TB_TOKEN below is a live Tinybird write token. Anyone with
+ * read access to this file can append to your Tinybird datasources.
+ * Recommended (when you have time): rotate the token in Tinybird and store
+ * the new value in Script Properties under "TINYBIRD_TOKEN", then change
+ * the line below to:
+ *   const TB_TOKEN = PropertiesService.getScriptProperties().getProperty("TINYBIRD_TOKEN");
  */
 const TB_TOKEN = 'p.eyJ1IjogImIxNjFlNThmLTRiNDctNDM4Zi1iMTQxLTcyNGZiNzAwYWQyOSIsICJpZCI6ICJkMmIzYjYwMi1kYmU5LTQwMzctOWY3Mi1mZTE1NTM1M2M4ZmMiLCAiaG9zdCI6ICJ1c19lYXN0In0.PfWQDROZyATN5cGPVDoKL6VPsAMbZYXZgAJXQw0xyvY';
 
@@ -36,27 +43,34 @@ function triggerTinybirdSync(sheetName) {
     const lastRow = sheet.getLastRow();
     if (lastRow < 2) return;
 
-    // 1. Scan from Bottom Up to find the last uploaded row
-    const statusValues = sheet.getRange(1, config.STATUS_COL, lastRow).getValues();
-    let startRow = 0;
-    for (let i = lastRow - 1; i >= 0; i--) {
-      if (statusValues[i][0].toString().trim().toLowerCase() === 'uploaded') {
-        startRow = i + 1;
+    // 1. Scan from Bottom Up to find the last uploaded row.
+    //    Read only the data rows (skip the header at row 1) so the status
+    //    scan can't accidentally match the header label.
+    const statusValues = sheet.getRange(2, config.STATUS_COL, lastRow - 1).getValues();
+    let startRow = 2; // default: start from first data row if no uploaded row found
+    let foundUploaded = false;
+    for (let i = statusValues.length - 1; i >= 0; i--) {
+      const cell = statusValues[i][0];
+      const val = (cell === null || cell === undefined) ? "" : cell.toString().trim().toLowerCase();
+      if (val === 'uploaded') {
+        startRow = i + 3; // i is 0-based offset into rows starting at row 2; next row to upload is i+3
+        foundUploaded = true;
         break;
       }
     }
 
-    if (startRow >= lastRow) return; // Everything already uploaded
+    if (foundUploaded && startRow > lastRow) return; // Everything already uploaded
 
     // 2. Prepare the new rows
-    const numNewRows = lastRow - startRow;
-    const newData = sheet.getRange(startRow + 1, 1, numNewRows, config.DATA_COLS).getDisplayValues();
-    
+    const numNewRows = lastRow - startRow + 1;
+    if (numNewRows <= 0) return;
+    const newData = sheet.getRange(startRow, 1, numNewRows, config.DATA_COLS).getDisplayValues();
+
     let csvRows = [];
     for (let i = 0; i < newData.length; i++) {
       if (newData[i][0] === "") continue;
       let processed = newData[i].map(cell => {
-        let str = cell.toString();
+        let str = (cell === null || cell === undefined) ? "" : cell.toString();
         if (str.includes(',') || str.includes('"') || str.includes('\n')) {
           str = '"' + str.replace(/"/g, '""') + '"';
         }
@@ -77,12 +91,12 @@ function triggerTinybirdSync(sheetName) {
     };
 
     const response = UrlFetchApp.fetch(`https://api.us-east.tinybird.co/v0/datasources?name=${config.DATASOURCE}&mode=append`, options);
-    
+
     if (response.getResponseCode() === 200 || response.getResponseCode() === 202) {
       // 4. Mark as uploaded
       let updateValues = [];
       for (let i = 0; i < numNewRows; i++) { updateValues.push(['uploaded']); }
-      sheet.getRange(startRow + 1, config.STATUS_COL, numNewRows, 1).setValues(updateValues);
+      sheet.getRange(startRow, config.STATUS_COL, numNewRows, 1).setValues(updateValues);
     } else {
       console.error(`Tinybird Sync Failed for ${sheetName}. Response: ${response.getContentText()}`);
     }

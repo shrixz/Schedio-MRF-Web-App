@@ -16,6 +16,7 @@
       --canvas: #f4f4f5;
       --panel: #ffffff;
       --muted: #6b6b6b;
+      --accent: #2563eb;       /* subtle blue — accent only, not a primary color */
       --sidebar-w: 260px;
     }
     * { box-sizing: border-box; }
@@ -160,6 +161,30 @@
     .segmented a:hover { color: var(--ink); }
     .segmented a.active { background: var(--ink); color: #fff; }
     .segmented a .badge { margin-left: 6px; }
+
+    /* Petty Cash — strict black/white/gray palette. Blue is used only as a
+       subtle accent (hover state, focus ring tint). The main brand color stays
+       --ink, so nothing in this tab should read as "blue" at rest. */
+    .pc-pane .section-title { color: var(--ink); }
+    .pc-pane .section-title i { color: var(--muted); }
+    .pc-pane a:not(.btn):not(.sb-item):not(.badge) {
+      color: var(--ink-soft);
+      text-decoration: underline;
+      text-decoration-color: var(--line-strong);
+      text-underline-offset: 2px;
+    }
+    .pc-pane a:not(.btn):not(.sb-item):not(.badge):hover {
+      color: var(--accent);
+      text-decoration-color: var(--accent);
+    }
+    .pc-pane .badge.bg-dark,
+    .pc-pane a.badge.bg-dark { color: #fff !important; }
+    .pc-pane .form-control:focus, .pc-pane .form-select:focus {
+      border-color: var(--ink); box-shadow: 0 0 0 2px rgba(0,0,0,0.08);
+    }
+    /* Available Balance read-out uses neutral background — was inheriting the
+       default form-control look which could flash blue on focus in some browsers. */
+    #pc-e-balance { background: #fafafa; border-color: var(--line-strong); color: var(--ink); }
 
     /* Buttons */
     .btn-ink { background: var(--ink); color: #fff; font-weight: 700; padding: 11px 24px; border: none; border-radius: 6px; letter-spacing: 1px; text-transform: uppercase; font-size: 0.82rem; }
@@ -384,7 +409,7 @@
 
           <!-- Log Expense -->
           <div id="pc-pane-expense" class="pc-pane">
-            <div class="panel" style="max-width: 760px;">
+            <div class="panel" style="max-width: 760px; margin: 0 auto;">
               <h5 class="section-title"><i class="bi bi-receipt me-2"></i> New Petty Cash Expense</h5>
               <div class="row mb-3">
                 <div class="col-md-6 mb-3">
@@ -433,7 +458,7 @@
 
           <!-- Request Replenishment -->
           <div id="pc-pane-replenish" class="pc-pane" style="display:none;">
-            <div class="row g-3">
+            <div class="row g-3 justify-content-center" style="max-width: 1100px; margin: 0 auto;">
               <div class="col-lg-5">
                 <div class="panel">
                   <h5 class="section-title"><i class="bi bi-arrow-repeat me-2"></i> Request Replenishment</h5>
@@ -550,6 +575,21 @@
   const SCRIPT_URL = "<?= typeof scriptUrl !== 'undefined' ? scriptUrl : '' ?>"; // Fixes white screen redirects
 
   function toggleLoader(show) { document.getElementById('loader').style.display = show ? 'flex' : 'none'; }
+
+  // Escape user/sheet-controlled strings before they hit innerHTML or HTML
+  // attribute values. Sheet cells (project, requestor, item name, remarks,
+  // etc.) can contain characters that break out of HTML context — treat
+  // them as untrusted strings whenever they go through template literals.
+  function escAttr(v) {
+    if (v === null || v === undefined) return '';
+    return v.toString()
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+  function escHtml(v) { return escAttr(v); }
 
   window.onload = () => {
     if (localStorage.getItem('mrfUser')) {
@@ -670,7 +710,11 @@
         else { Swal.fire('Error', res, 'error'); }
       })
       .withFailureHandler(err => { toggleLoader(false); Swal.fire('Error', 'Update failed.', 'error'); })
-      .finalizePassword(currentUser, p1);
+      // Use the user's email (not display name) for the lookup. Name matches
+      // are fragile against whitespace/accent differences in the sheet, which
+      // used to surface as a generic "User verification failed." error after
+      // the new-user password setup modal closed.
+      .finalizePassword(userEmail || currentUser, p1);
   }
 
   function doRecover() {
@@ -872,6 +916,7 @@
      toggleLoader(true);
      google.script.run
         .withSuccessHandler(res => {
+           toggleLoader(false);
            Swal.fire('Submitted', res, 'success').then(() => {
               loadUIData('request');
            });
@@ -1120,80 +1165,111 @@
 
   function loadQueue() {
     toggleLoader(true);
-    google.script.run.withSuccessHandler(allGroups => {
+
+    function showQueueError(msg) {
       const body = document.getElementById('queueBody');
       const addBody = document.getElementById('additionalQueueBody');
+      const html = `<div class="alert alert-danger text-center">${escHtml(msg)}</div>`;
+      if (body) body.innerHTML = html;
+      if (addBody) addBody.innerHTML = html;
+      toggleLoader(false);
+    }
 
-      const groups = allGroups.filter(g => userProjects.includes(g.project));
+    google.script.run
+      .withSuccessHandler(allGroups => {
+        if (!Array.isArray(allGroups)) { showQueueError('Could not load pending queue.'); return; }
+        const body = document.getElementById('queueBody');
+        const addBody = document.getElementById('additionalQueueBody');
 
-      if(!groups || !groups.length) {
-        body.innerHTML = '<div class="alert alert-secondary text-center">NO PENDING ITEMS.</div>';
-        addBody.innerHTML = '<div class="alert alert-secondary text-center">NO PENDING ADDITIONAL ITEMS.</div>';
-        toggleLoader(false); return;
-      }
+        const groups = allGroups.filter(g => userProjects.includes(g.project));
 
-      body.innerHTML = ''; addBody.innerHTML = '';
+        if(!groups || !groups.length) {
+          body.innerHTML = '<div class="alert alert-secondary text-center">NO PENDING ITEMS.</div>';
+          addBody.innerHTML = '<div class="alert alert-secondary text-center">NO PENDING ADDITIONAL ITEMS.</div>';
+          toggleLoader(false); return;
+        }
 
-      google.script.run.withSuccessHandler(metaList => {
-        let hasAlloc = false, hasAdd = false;
-        groups.forEach(g => {
-          const isAdd = g.docType === 'Additional Request Outside BOQ';
-          const cardClass = isAdd ? 'border-warning' : '';
-          const headerClass = isAdd ? 'bg-warning text-dark' : '';
+        body.innerHTML = ''; addBody.innerHTML = '';
 
-          let rows = g.items.map(it => {
-            const meta = metaList.find(m => m.id === g.id && m.name === it.name) || {scope:"", subScope:"", subSubScope:"", question:"", justification:""};
-            const safeName = (it.name || "").toString().replace(/"/g, '&quot;');
-            const formattedQty = formatToDisplayNumber(it.qty);
+        google.script.run
+          .withSuccessHandler(metaList => {
+            const meta = Array.isArray(metaList) ? metaList : [];
+            let hasAlloc = false, hasAdd = false;
+            groups.forEach(g => {
+              const isAdd = g.docType === 'Additional Request Outside BOQ';
+              const cardClass = isAdd ? 'border-warning' : '';
+              const headerClass = isAdd ? 'bg-warning text-dark' : '';
 
-            let historyHtml = "";
-            if (it.remarks && it.remarks.toString().trim() !== "") {
-                historyHtml += `<div class="text-secondary fw-bold" style="font-size: 0.75rem; margin-bottom: 4px;"><i class="bi bi-info-square-fill"></i> Req Remarks: ${it.remarks}</div>`;
-            }
-            if (meta.justification) {
-                historyHtml += `<div class="p-2 bg-light border border-info rounded text-wrap text-break mt-1">
-                              <div class="text-info fw-bold" style="font-size: 0.7rem;"><i class="bi bi-question-circle-fill"></i> Q: ${meta.question}</div>
-                              <div class="text-dark fw-bold mt-1" style="font-size: 0.75rem;"><i class="bi bi-chat-left-text-fill"></i> Reply: ${meta.justification}</div>
-                            </div>`;
-            }
-            if (!historyHtml) {
-                historyHtml = `<div class="text-muted text-center" style="font-size: 0.8rem;">-</div>`;
-            }
+              let rows = g.items.map(it => {
+                const m = meta.find(x => x.id === g.id && x.name === it.name) || {scope:"", subScope:"", subSubScope:"", question:"", justification:""};
+                const formattedQty = formatToDisplayNumber(it.qty);
 
-            return `<tr class="item-row" data-phase="${it.phase}" data-name="${safeName}" data-unit="${it.unit}" data-scope="${meta.scope}" data-subscope="${meta.subScope}" data-subsubscope="${meta.subSubScope}" data-justification="${(meta.justification||'').replace(/"/g, '&quot;')}" data-question="${(meta.question||'').replace(/"/g, '&quot;')}">
-              <td class="align-top"><strong>${safeName}</strong><br><small>${it.phase}</small></td>
-              <td class="align-top"><input type="text" class="final-qty form-control form-control-sm text-center fw-bold" value="${formattedQty}" oninput="formatNumberInput(this)"></td>
-              <td class="text-center align-top">${it.unit}</td>
-              <td class="align-top">${historyHtml}</td>
-              <td class="align-top"><input type="text" class="app-remarks form-control form-control-sm" placeholder="Approver Remarks" value=""></td>
-            </tr>`;
-          }).join('');
+                let historyHtml = "";
+                if (it.remarks && it.remarks.toString().trim() !== "") {
+                    historyHtml += `<div class="text-secondary fw-bold" style="font-size: 0.75rem; margin-bottom: 4px;"><i class="bi bi-info-square-fill"></i> Req Remarks: ${escHtml(it.remarks)}</div>`;
+                }
+                if (m.justification) {
+                    historyHtml += `<div class="p-2 bg-light border border-info rounded text-wrap text-break mt-1">
+                                  <div class="text-info fw-bold" style="font-size: 0.7rem;"><i class="bi bi-question-circle-fill"></i> Q: ${escHtml(m.question)}</div>
+                                  <div class="text-dark fw-bold mt-1" style="font-size: 0.75rem;"><i class="bi bi-chat-left-text-fill"></i> Reply: ${escHtml(m.justification)}</div>
+                                </div>`;
+                }
+                if (!historyHtml) {
+                    historyHtml = `<div class="text-muted text-center" style="font-size: 0.8rem;">-</div>`;
+                }
 
-          const safeProject = (g.project || "").toString().replace(/'/g, "\\'");
+                return `<tr class="item-row" data-phase="${escAttr(it.phase)}" data-name="${escAttr(it.name)}" data-unit="${escAttr(it.unit)}" data-scope="${escAttr(m.scope)}" data-subscope="${escAttr(m.subScope)}" data-subsubscope="${escAttr(m.subSubScope)}" data-justification="${escAttr(m.justification||'')}" data-question="${escAttr(m.question||'')}">
+                  <td class="align-top"><strong>${escHtml(it.name)}</strong><br><small>${escHtml(it.phase)}</small></td>
+                  <td class="align-top"><input type="text" class="final-qty form-control form-control-sm text-center fw-bold" value="${escAttr(formattedQty)}" oninput="formatNumberInput(this)"></td>
+                  <td class="text-center align-top">${escHtml(it.unit)}</td>
+                  <td class="align-top">${historyHtml}</td>
+                  <td class="align-top"><input type="text" class="app-remarks form-control form-control-sm" placeholder="Approver Remarks" value=""></td>
+                </tr>`;
+              }).join('');
 
-          const cardHtml = `<div class="batch-card ${cardClass}" id="batch-${g.id}" data-project="${safeProject}" data-date="${g.date}">
-              <div class="batch-header ${headerClass}"><div><span class="badge bg-light text-dark me-2">${g.date}</span><span>${g.id}</span> <strong>${g.project}</strong></div><div class="small fw-bold">REQ: ${g.requestor}</div></div>
-              <table class="table table-sm table-bordered mb-0 align-middle">
-                <thead><tr><th width="28%">Item</th><th width="12%">Amount</th><th width="10%">Unit</th><th width="25%">History</th><th width="25%">Approver Remarks</th></tr></thead>
-                <tbody>${rows}</tbody>
-              </table>
-              <div class="batch-footer">
-                <button class="btn-info-req me-auto" onclick="requestInfoBatch('${g.id}')"><i class="bi bi-question-circle-fill"></i> REQUEST INFO</button>
-                <button class="btn-decline" onclick="declineBatch('${g.id}')">DECLINE</button>
-                <button class="btn-approve" onclick="approveBatch('${g.id}', '${safeProject}')">APPROVE</button>
-              </div>
-            </div>`;
+              const cardHtml = `<div class="batch-card ${cardClass}" id="batch-${escAttr(g.id)}" data-project="${escAttr(g.project)}" data-date="${escAttr(g.date)}">
+                  <div class="batch-header ${headerClass}"><div><span class="badge bg-light text-dark me-2">${escHtml(g.date)}</span><span>${escHtml(g.id)}</span> <strong>${escHtml(g.project)}</strong></div><div class="small fw-bold">REQ: ${escHtml(g.requestor)}</div></div>
+                  <table class="table table-sm table-bordered mb-0 align-middle">
+                    <thead><tr><th width="28%">Item</th><th width="12%">Amount</th><th width="10%">Unit</th><th width="25%">History</th><th width="25%">Approver Remarks</th></tr></thead>
+                    <tbody>${rows}</tbody>
+                  </table>
+                  <div class="batch-footer">
+                    <button class="btn-info-req me-auto queue-action-btn" data-action="info" data-id="${escAttr(g.id)}"><i class="bi bi-question-circle-fill"></i> REQUEST INFO</button>
+                    <button class="btn-decline queue-action-btn" data-action="decline" data-id="${escAttr(g.id)}">DECLINE</button>
+                    <button class="btn-approve queue-action-btn" data-action="approve" data-id="${escAttr(g.id)}" data-project="${escAttr(g.project)}">APPROVE</button>
+                  </div>
+                </div>`;
 
-          if (isAdd) { addBody.innerHTML += cardHtml; hasAdd = true; }
-          else { body.innerHTML += cardHtml; hasAlloc = true; }
-        });
+              if (isAdd) { addBody.innerHTML += cardHtml; hasAdd = true; }
+              else { body.innerHTML += cardHtml; hasAlloc = true; }
+            });
 
-        if (!hasAlloc) body.innerHTML = '<div class="alert alert-secondary text-center">NO PENDING ALLOCATED ITEMS.</div>';
-        if (!hasAdd) addBody.innerHTML = '<div class="alert alert-secondary text-center">NO PENDING ADDITIONAL ITEMS.</div>';
+            if (!hasAlloc) body.innerHTML = '<div class="alert alert-secondary text-center">NO PENDING ALLOCATED ITEMS.</div>';
+            if (!hasAdd) addBody.innerHTML = '<div class="alert alert-secondary text-center">NO PENDING ADDITIONAL ITEMS.</div>';
 
-        toggleLoader(false);
-      }).getLogMetadata(groups.map(g => g.id.toString()));
-    }).getPendingQueueGrouped();
+            // Delegated event wiring — keeps user-controlled strings out of
+            // inline onclick handlers (closed XSS via project / id values).
+            document.querySelectorAll('.queue-action-btn').forEach(btn => {
+              btn.addEventListener('click', () => {
+                const id = btn.dataset.id;
+                const action = btn.dataset.action;
+                if (action === 'info') requestInfoBatch(id);
+                else if (action === 'decline') declineBatch(id);
+                else if (action === 'approve') approveBatch(id, btn.dataset.project || '');
+              });
+            });
+
+            toggleLoader(false);
+          })
+          .withFailureHandler(err => {
+            showQueueError('Could not load item details: ' + (err && err.message ? err.message : err));
+          })
+          .getLogMetadata(groups.map(g => g.id.toString()));
+      })
+      .withFailureHandler(err => {
+        showQueueError('Could not load pending queue: ' + (err && err.message ? err.message : err));
+      })
+      .getPendingQueueGrouped();
   }
 
   function filterApproverQueue() {
@@ -1232,6 +1308,9 @@
       toggleLoader(false);
       if(res.indexOf("Error") > -1) Swal.fire('Warning', res, 'warning');
       else Swal.fire('Success', 'Approved', 'success').then(loadQueue);
+    }).withFailureHandler(e => {
+      toggleLoader(false);
+      Swal.fire('Error', (e && e.message) ? e.message : 'The approval did not complete. Please try again.', 'error');
     }).processBatchApproval(mrfId, updates, currentUser);
   }
 
@@ -1248,6 +1327,9 @@
         toggleLoader(true);
         google.script.run.withSuccessHandler((res) => {
           toggleLoader(false); Swal.fire('Declined', res, 'info').then(loadQueue);
+        }).withFailureHandler(e => {
+          toggleLoader(false);
+          Swal.fire('Error', (e && e.message) ? e.message : 'The decline did not complete. Please try again.', 'error');
         }).processBatchDecline(mrfId, remarks, currentUser);
       }
     });
@@ -1259,13 +1341,13 @@
 
     rows.forEach((r, idx) => {
        let prevReply = r.dataset.justification;
-       let prevContextHtml = prevReply ? `<div class="text-success small fw-bold mb-2 bg-light p-2 rounded"><i class="bi bi-chat-left-text"></i> Last Reply: ${prevReply}</div>` : "";
+       let prevContextHtml = prevReply ? `<div class="text-success small fw-bold mb-2 bg-light p-2 rounded"><i class="bi bi-chat-left-text"></i> Last Reply: ${escHtml(prevReply)}</div>` : "";
 
        html += `
          <div class="mb-3 text-start border-bottom pb-3">
-           <label class="form-label fw-bold small text-dark mb-1">${r.dataset.name}</label>
+           <label class="form-label fw-bold small text-dark mb-1">${escHtml(r.dataset.name)}</label>
            ${prevContextHtml}
-           <input type="text" id="just-q-${idx}" data-name="${r.dataset.name}" class="form-control form-control-sm border-info" placeholder="Why is this requested?">
+           <input type="text" id="just-q-${idx}" data-name="${escAttr(r.dataset.name)}" class="form-control form-control-sm border-info" placeholder="Why is this requested?">
          </div>
        `;
     });
@@ -1330,10 +1412,33 @@
       }
       pcGlobalData = data;
 
+      // Source the dropdown from the same project list as the New Request tab
+      // (userProjects, populated by loadUIData → getInitialUIData). For each
+      // project, look up the matching petty-cash-enabled entry by name so we
+      // can carry the Project Database row id (required by submitPettyCashExpense)
+      // and the current balance. Petty cash enablement = col I of Project Database
+      // is filled (see setup.js). Projects assigned to the user but without a col I
+      // value are still shown so the user can see them, but disabled.
+      const pcByName = new Map();
+      (data.projects || []).forEach(p => {
+        if (p && p.name) pcByName.set(p.name.toLowerCase(), p);
+      });
+
+      // Fallback to the petty-cash project list if userProjects hasn't loaded
+      // yet (race: user clicks Petty Cash before loadUIData resolves).
+      const sourceNames = (Array.isArray(userProjects) && userProjects.length)
+        ? userProjects
+        : (data.projects || []).map(p => p.name);
+
       const projOptions = '<option value="">-- Select Project --</option>' +
-        (data.projects || []).map(p =>
-          `<option value="${p.id}" data-name="${(p.name||'').replace(/"/g,'&quot;')}" data-balance="${p.balance}">${p.name}</option>`
-        ).join('');
+        sourceNames.map(name => {
+          const safeName = (name || '').replace(/"/g, '&quot;');
+          const pc = pcByName.get((name || '').toLowerCase());
+          if (pc) {
+            return `<option value="${pc.id}" data-name="${safeName}" data-balance="${pc.balance}">${name}</option>`;
+          }
+          return `<option value="" data-name="${safeName}" data-balance="0" disabled>${name} (no petty cash setup)</option>`;
+        }).join('');
       const eSel = document.getElementById('pc-e-project');
       const rSel = document.getElementById('pc-rep-project');
       if (eSel) eSel.innerHTML = projOptions;
@@ -1495,7 +1600,9 @@
     body.innerHTML = myReps.map(r => {
       const status = r[7] || '';
       const badge = status === 'Approved' ? 'bg-success' : (status === 'Denied' ? 'bg-danger' : 'bg-secondary');
-      const doc = (r[8] && r[8].toString().startsWith('http')) ? `<a href="${r[8]}" target="_blank">View</a>` : '-';
+      const doc = (r[8] && r[8].toString().startsWith('http'))
+        ? `<a href="${r[8]}" target="_blank" class="badge bg-dark text-decoration-none">VIEW</a>`
+        : '-';
       return `<tr>
         <td>${new Date(r[0]).toLocaleDateString()}</td>
         <td class="fw-bold">${r[1]}</td>
